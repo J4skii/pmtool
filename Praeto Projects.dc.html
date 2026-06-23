@@ -53,17 +53,13 @@
       <div style="display:flex;align-items:center;gap:7px;flex-shrink:0">
         <input id="praeto-file-import" type="file" accept=".csv,.xlsx,.xls" onChange="{{ onFileImport }}" style="display:none"/>
         <sc-if value="{{ hasSheets }}" hint-placeholder-val="{{ false }}">
-          <select onChange="{{ onSheetChange }}" value="{{ activeSheet }}" style="border:1px solid #E0DED7;background:#fff;color:#7A7F85;cursor:pointer;font-family:inherit;font-size:12px;font-weight:600;padding:7px 11px;border-radius:9px;outline:none">
-            <sc-for list="{{ availableSheets }}" as="s" hint-placeholder-count="2">
-              <option value="{{ s }}">{{ s }}</option>
+          <select onChange="{{ onSheetChange }}" value="{{ activeSheetName }}" style="border:1px solid #E0DED7;background:#fff;color:#7A7F85;cursor:pointer;font-family:inherit;font-size:12px;font-weight:600;padding:7px 11px;border-radius:9px;outline:none">
+            <sc-for list="{{ sheets }}" as="s" hint-placeholder-count="2">
+              <option value="{{ s.name }}">{{ s.name }}</option>
             </sc-for>
           </select>
         </sc-if>
-        <sc-if value="{{ needsAuth }}" hint-placeholder-val="{{ false }}">
-          <a href="{{ authUrl }}" style="text-decoration:none">
-            <button style="border:1px solid #E0DED7;background:#fff;color:#4D5258;cursor:pointer;font-family:inherit;font-size:12px;font-weight:600;padding:7px 11px;border-radius:9px;white-space:nowrap">Sign in with Microsoft</button>
-          </a>
-        </sc-if>
+        <button onClick="{{ onOpenSheetMgr }}" style="border:1px solid #E0DED7;background:#fff;color:#7A7F85;cursor:pointer;font-family:inherit;font-size:12px;font-weight:600;padding:7px 11px;border-radius:9px;white-space:nowrap">⚙ Sheets</button>
         <button onClick="{{ onSync }}" style="{{ syncBtnStyle }}" title="{{ syncStatusText }}">{{ syncBtn }}</button>
         <button onClick="{{ onManualImport }}" title="Import a CSV or XLSX export from OneDrive" style="border:1px solid #E0DED7;background:#fff;color:#7A7F85;cursor:pointer;font-family:inherit;font-size:12px;font-weight:600;padding:7px 11px;border-radius:9px;white-space:nowrap">↑ Import</button>
         <sc-if value="{{ hasSyncStatus }}" hint-placeholder-val="{{ false }}">
@@ -299,6 +295,55 @@
     </div>
   </sc-if>
 
+  <!-- SHEET MANAGER -->
+  <sc-if value="{{ showSheetMgr }}" hint-placeholder-val="{{ false }}">
+    <div onClick="{{ onCloseSheetMgr }}" style="position:fixed;inset:0;z-index:40;background:rgba(20,23,28,.34);animation:fadeIn .18s ease"></div>
+    <div style="position:fixed;top:0;right:0;bottom:0;width:500px;max-width:94vw;z-index:41;background:#F7F6F2;box-shadow:-8px 0 40px rgba(20,23,28,.18);display:flex;flex-direction:column;animation:drawerIn .22s cubic-bezier(.2,.8,.2,1)">
+      <div style="padding:22px 24px 16px;border-bottom:1px solid #E5E3DD;background:#fff">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+          <div style="font-size:18px;font-weight:800;letter-spacing:-.02em">Manage sheets</div>
+          <button onClick="{{ onCloseSheetMgr }}" style="width:30px;height:30px;border-radius:9px;border:1px solid #E5E3DD;background:#fff;cursor:pointer;font-size:16px;color:#7A7F85;display:flex;align-items:center;justify-content:center">✕</button>
+        </div>
+        <div style="font-size:13px;color:#8A8F95;font-weight:500">Connect OneDrive Excel files. Each sheet needs its own public share link.</div>
+      </div>
+      <div style="background:#FBF0E0;border-bottom:1px solid #F0D9B0;padding:10px 24px">
+        <div style="font-size:12px;font-weight:600;color:#92580A">⚠ Share links MUST be set to "Anyone with the link can view" in OneDrive — otherwise sync will fail.</div>
+      </div>
+      <div style="flex:1;overflow-y:auto;padding:20px 24px 40px">
+        <div style="font-size:11px;font-weight:700;color:#8A8F95;letter-spacing:.06em;text-transform:uppercase;margin-bottom:12px">Connected sheets · {{ sheetCount }}</div>
+        <sc-if value="{{ hasSheets }}" hint-placeholder-val="{{ false }}">
+          <div style="display:flex;flex-direction:column;gap:9px;margin-bottom:26px">
+            <sc-for list="{{ sheetRows }}" as="s" hint-placeholder-count="2">
+              <div style="background:#fff;border:1px solid #EAE8E1;border-radius:12px;padding:13px 15px">
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:7px">
+                  <div style="font-size:14px;font-weight:700">{{ s.name }}</div>
+                  <div style="display:flex;gap:7px">
+                    <button onClick="{{ s.onSetActive }}" style="{{ s.activeStyle }}">{{ s.activeLabel }}</button>
+                    <button onClick="{{ s.onRemove }}" style="border:1px solid #F5C8C2;background:#FBEAE8;color:#C0392B;cursor:pointer;font-family:inherit;font-size:11px;font-weight:600;padding:4px 10px;border-radius:7px">Remove</button>
+                  </div>
+                </div>
+                <div style="font-size:11px;font-family:'Geist Mono',monospace;color:#9AA0A6;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ s.url }}</div>
+              </div>
+            </sc-for>
+          </div>
+        </sc-if>
+        <div style="font-size:11px;font-weight:700;color:#8A8F95;letter-spacing:.06em;text-transform:uppercase;margin-bottom:12px">Add a sheet</div>
+        <div style="background:#fff;border:1px solid #EAE8E1;border-radius:12px;padding:18px">
+          <div style="margin-bottom:12px">
+            <div style="font-size:11.5px;font-weight:600;color:#4D5258;margin-bottom:5px">Sheet name</div>
+            <input value="{{ newSheetName }}" onInput="{{ onNewSheetName }}" placeholder="e.g. Pipeline" style="width:100%;border:1px solid #E0DED7;border-radius:9px;padding:9px 12px;font-family:inherit;font-size:13px;color:#16191C;outline:none;box-sizing:border-box"/>
+          </div>
+          <div style="margin-bottom:14px">
+            <div style="font-size:11.5px;font-weight:600;color:#4D5258;margin-bottom:5px">OneDrive share link</div>
+            <input value="{{ newSheetUrl }}" onInput="{{ onNewSheetUrl }}" placeholder="https://1drv.ms/x/..." style="width:100%;border:1px solid #E0DED7;border-radius:9px;padding:9px 12px;font-family:'Geist Mono',monospace;font-size:12px;color:#16191C;outline:none;box-sizing:border-box"/>
+            <div style="font-size:11px;color:#9AA0A6;margin-top:5px">Must be "Anyone with the link can view" — not password protected or company-only.</div>
+          </div>
+          <button onClick="{{ onAddSheet }}" style="{{ addBtnStyle }}">Add sheet</button>
+        </div>
+      </div>
+    </div>
+  </sc-if>
+
 </div>
 </x-dc>
 <script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1440,&quot;height&quot;:940},&quot;accent&quot;:{&quot;editor&quot;:&quot;color&quot;,&quot;default&quot;:&quot;#0E5C4A&quot;,&quot;tsType&quot;:&quot;string&quot;},&quot;defaultView&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;board&quot;,&quot;timeline&quot;,&quot;table&quot;],&quot;default&quot;:&quot;board&quot;,&quot;tsType&quot;:&quot;string&quot;},&quot;showWeekend&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;}}">
@@ -404,54 +449,35 @@ class Component extends DCLogic {
     let ov={};
     try{ov=JSON.parse(localStorage.getItem('praeto-status-v2')||'{}')}catch(e){}
     const dv=(props&&props.defaultView)||'board';
-    this.state={view:dv,owner:'all',prio:'all',q:'',sel:null,ov,sort:'finish',sortDir:1,syncState:'idle',syncMsg:'',lastSync:'',backendAuth:false,backendReady:false,activeSheet:'',availableSheets:[],authUrl:''};
+    let sheets=[];try{sheets=JSON.parse(localStorage.getItem('praeto-sheets-v1')||'[]');}catch(e){}
+    this.state={view:dv,owner:'all',prio:'all',q:'',sel:null,ov,sort:'finish',sortDir:1,syncState:'idle',syncMsg:'',sheets,activeSheetName:sheets[0]?.name||'',showSheetMgr:false,newSheetName:'',newSheetUrl:''};
   }
 
   componentDidMount(){
     const backend=this.props.backendUrl||'http://localhost:3001';
     this.backend=backend;
-    this.checkAuth();
     this.trySync();
     this._si=setInterval(()=>this.trySync(),5*60*1000);
   }
   componentWillUnmount(){if(this._si)clearInterval(this._si);}
 
-  async checkAuth(){
-    try{
-      const r=await fetch(this.backend+'/api/auth/status');
-      const st=await r.json();
-      this.setState({backendAuth:st.authenticated,backendReady:true});
-    }catch(e){
-      this.setState({backendReady:false});
-    }
-  }
-
   async trySync(){
-    if(!this.state.backendReady)return;
+    const sheet=this.state.sheets.find(s=>s.name===this.state.activeSheetName);
+    if(!sheet){this.setState({syncState:'idle',syncMsg:''});return;}
     this.setState({syncState:'loading',syncMsg:'Pulling from Excel…'});
     try{
-      const res=await fetch(this.backend+'/api/sync',{
-        method:'POST',
-        headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({shareUrl:''})
-      });
-      if(res.status===401){
-        this.setState({syncState:'error',syncMsg:'Sign in with Microsoft',authUrl:this.backend+'/api/auth/login'});
-        return;
+      const res=await fetch(this.backend+'/api/data?shareUrl='+encodeURIComponent(sheet.url));
+      if(!res.ok){
+        const d=await res.json().catch(()=>({}));
+        if(d.code==='NOT_PUBLIC')throw new Error('Share link not public — set to "Anyone with the link" in OneDrive');
+        throw new Error(d.error||'HTTP '+res.status);
       }
-      if(!res.ok)throw new Error('HTTP '+res.status);
       const d=await res.json();
-      if(!d.success)throw new Error(d.error);
-      const sheet=this.state.activeSheet||d.sheets[0]||'Sheet1';
-      const dataRes=await fetch(this.backend+'/api/data/'+encodeURIComponent(sheet));
-      if(!dataRes.ok)throw new Error('Failed to get data');
-      const projData=await dataRes.json();
-      this._applyData(projData.projects);
+      this._applyData(d.projects);
       const n=new Date();
-      this.setState({syncState:'done',syncMsg:'Live · '+n.getHours()+':'+String(n.getMinutes()).padStart(2,'0'),lastSync:n.toISOString(),activeSheet:sheet,availableSheets:d.sheets});
+      this.setState({syncState:'done',syncMsg:'Live · '+n.getHours()+':'+String(n.getMinutes()).padStart(2,'0')});
     }catch(e){
-      const m=String(e.message||e);
-      this.setState({syncState:'error',syncMsg:m.slice(0,50)});
+      this.setState({syncState:'error',syncMsg:String(e.message||e).slice(0,60)});
     }
   }
 
@@ -550,7 +576,24 @@ class Component extends DCLogic {
   close(){this.setState({sel:null});}
   setSort(k){this.setState(st=>({sort:k,sortDir:st.sort===k?-st.sortDir:1}));}
   cycle(uid){const order=['todo','active','done','blocked'];this.setState(st=>{const t=this._all().find(x=>x.uid===uid);const cur=st.ov[uid]||(t&&t.s)||'todo';const next=order[(order.indexOf(cur)+1)%order.length];const ov={...st.ov,[uid]:next};try{localStorage.setItem('praeto-status-v2',JSON.stringify(ov))}catch(e){}return {ov};});}
-  onSheetChange(e){this.setState({activeSheet:e.target.value},()=>this.trySync());}
+  onSheetChange(e){this.setState({activeSheetName:e.target.value},()=>this.trySync());}
+
+  _saveSheets(arr){try{localStorage.setItem('praeto-sheets-v1',JSON.stringify(arr));}catch(e){}this.setState({sheets:arr});}
+  addSheet(){
+    const name=this.state.newSheetName.trim(),url=this.state.newSheetUrl.trim();
+    if(!name||!url)return;
+    if(this.state.sheets.find(s=>s.name===name))return;
+    const next=[...this.state.sheets,{name,url}];
+    this._saveSheets(next);
+    this.setState({newSheetName:'',newSheetUrl:'',activeSheetName:name},()=>this.trySync());
+  }
+  removeSheet(name){
+    const next=this.state.sheets.filter(s=>s.name!==name);
+    this._saveSheets(next);
+    this.setState({activeSheetName:next[0]?.name||''},()=>this.trySync());
+  }
+  openSheetMgr(){this.setState({showSheetMgr:true});}
+  closeSheetMgr(){this.setState({showSheetMgr:false});}
 
   _all(){const r=[];this.data.forEach(p=>p.tasks.forEach(t=>r.push(t)));return r;}
 
@@ -706,6 +749,17 @@ class Component extends DCLogic {
     const sc=st.syncState||'idle';
     const syncBtnBase='border:none;cursor:pointer;font-family:inherit;font-size:12px;font-weight:700;padding:7px 11px;border-radius:9px;white-space:nowrap;transition:all .15s;';
     const syncBtnStyle=syncBtnBase+'background:'+(sc==='done'?'#E7F4EC':(sc==='error'?'#FBEAE8':'#fff'))+';color:'+syncColors[sc]+';border:1px solid '+(sc==='done'?'#B8E6C8':(sc==='error'?'#F5C8C2':'#E0DED7'))+';';
+    const sheets=st.sheets||[];
+    const btnBase='border:1px solid #E0DED7;background:#fff;color:#4D5258;cursor:pointer;font-family:inherit;font-size:11px;font-weight:600;padding:4px 10px;border-radius:7px;';
+    const sheetRows=sheets.map(s=>({
+      name:s.name,url:s.url,
+      activeLabel:s.name===st.activeSheetName?'Active':'Set active',
+      activeStyle:btnBase+(s.name===st.activeSheetName?'background:#E6F0ED;color:#0E5C4A;border-color:#C2DDD7;':''),
+      onSetActive:()=>{this.setState({activeSheetName:s.name},()=>this.trySync());},
+      onRemove:()=>this.removeSheet(s.name),
+    }));
+    const canAdd=!!(st.newSheetName&&st.newSheetUrl);
+    const addBtnStyle='border:none;cursor:'+(canAdd?'pointer':'not-allowed')+';font-family:inherit;font-size:13px;font-weight:700;padding:9px 18px;border-radius:9px;width:100%;transition:all .15s;background:'+(canAdd?'#0E5C4A':'#EAE8E1')+';color:'+(canAdd?'#fff':'#9AA0A6')+';';
     return {accent:A,q:st.q,viewTabs,ownerChips,prioChips,kpis,columns,gantt,
       tableCols,tableRows:trows,
       isBoard:st.view==='board',isTimeline:st.view==='timeline',isTable:st.view==='table',
@@ -716,16 +770,23 @@ class Component extends DCLogic {
       onSearch:(e)=>this.onSearch(e),
       onFileImport:(e)=>this.onFileImport(e),
       onSheetChange:(e)=>this.onSheetChange(e),
-      hasSheets:!!(st.availableSheets&&st.availableSheets.length),
-      activeSheet:st.activeSheet||'',
-      availableSheets:st.availableSheets||[],
-      needsAuth:sc==='error'&&!!st.authUrl,
-      authUrl:st.authUrl||(this.backend+'/api/auth/login'),
+      sheets,hasSheets:sheets.length>0,
+      activeSheetName:st.activeSheetName||'',
       syncBtn:syncLabels[sc]||'⟳ Sync',
       syncBtnStyle,
       syncStatusText:st.syncMsg||'',
       syncStatusColor:syncColors[sc],
       hasSyncStatus:!!(st.syncMsg),
+      showSheetMgr:!!st.showSheetMgr,
+      onOpenSheetMgr:()=>this.openSheetMgr(),
+      onCloseSheetMgr:()=>this.closeSheetMgr(),
+      sheetRows,sheetCount:sheets.length,
+      newSheetName:st.newSheetName||'',
+      newSheetUrl:st.newSheetUrl||'',
+      onNewSheetName:(e)=>this.setState({newSheetName:e.target.value}),
+      onNewSheetUrl:(e)=>this.setState({newSheetUrl:e.target.value}),
+      onAddSheet:()=>this.addSheet(),
+      addBtnStyle,
     }
   }
 }

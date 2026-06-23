@@ -1,212 +1,183 @@
 # Praeto Excel Sync — Setup Guide
 
-## Quick Start
+---
+
+## ⚠ Before you begin: make your Excel file public
+
+**This is the most important step.** The sync only works if your OneDrive file is shared as "Anyone with the link can view". No sign-in, no Azure, no OAuth — but the file must be publicly readable.
+
+**In OneDrive:**
+1. Right-click your Excel file → **Share**
+2. Click the link settings (usually says "People in Praeto can view")
+3. Change to **"Anyone with the link"**
+4. Set to **"Can view"** (not edit)
+5. Click **Apply** → **Copy link**
+
+That link (starting with `https://1drv.ms/...`) is what you paste into the dashboard.
+
+---
+
+## Local development
 
 ### 1. Prerequisites
+
 - Node.js 18+ installed
-- A Microsoft account (free)
-- The OneDrive Excel file shared link
+- The OneDrive Excel share link (from the step above)
 
-### 2. Create Azure App Registration (5 min)
-
-1. Go to **[Azure Portal](https://portal.azure.com)** → sign in with your Microsoft account
-2. Search for **"App registrations"** → click **New registration**
-3. Fill in:
-   - **Name:** `Praeto Excel Sync`
-   - **Redirect URI:** `http://localhost:3001/api/auth/callback` (for local dev)
-4. Click **Register**
-5. Copy the **Application (client) ID** — save it
-6. Go to **Certificates & secrets** → **New client secret**
-7. Copy the **Value** (not the ID) — this is your `CLIENT_SECRET`
-8. Done!
-
-### 3. Configure Backend
+### 2. Configure backend
 
 ```bash
 cd backend
 cp .env.example .env
 ```
 
-Edit `.env`:
-```
-AZURE_CLIENT_ID=<paste your client ID>
-AZURE_CLIENT_SECRET=<paste your secret>
-ONEDRIVE_SHARE_LINK=https://1drv.ms/x/...your-share-link...
-FRONTEND_URL=http://localhost:3000
-BACKEND_URL=http://localhost:3001
-```
+The `.env` file only needs `FRONTEND_URL` if you want to restrict CORS. For local dev the defaults work fine — you can leave it as-is.
 
-### 4. Run Backend Locally
+### 3. Install and run
 
 ```bash
-cd backend
 npm install
 npm run dev
 ```
 
 You should see:
 ```
-🚀 Praeto Excel Sync Backend running on port 3001
-📝 OAuth login: http://localhost:3001/api/auth/login
+Praeto backend running on :3001
+Data endpoint: GET http://localhost:3001/api/data?shareUrl=<1drv.ms link>
 ```
 
-### 5. Run Dashboard
+### 4. Serve the dashboard
 
-In another terminal:
+In a separate terminal:
+
 ```bash
-# The dashboard already exists as Praeto Projects.dc.html
-# Serve it with any HTTP server:
+# From the project root (not /backend):
 python3 -m http.server 3000
-# or
-npx http-server -p 3000
+# or: npx http-server -p 3000
 ```
 
-### 6. Test OAuth Flow
+### 5. Add your first sheet
 
-1. Open dashboard: `http://localhost:3000/Praeto%20Projects.dc.html`
-2. Click **"Sign in with Microsoft"** button (appears when sync fails)
-3. You'll be redirected to Microsoft login
-4. Authorize the app to access your OneDrive
-5. Dashboard should now sync successfully every 5 min
+1. Open `http://localhost:3000/Praeto%20Projects.dc.html`
+2. Click **⚙ Sheets** in the top-right of the header
+3. Enter a name (e.g. `Pipeline`) and paste the share link
+4. Click **Add sheet** — it syncs immediately
+
+Sheet links are stored in your browser's localStorage. They persist between sessions.
 
 ---
 
-## Deploying to Vercel (Free)
+## Deploying to Vercel (free)
 
-### Step 1: Push to GitHub
+### Step 1: Push to GitHub (if not already)
 
 ```bash
-git init
 git add .
-git commit -m "Initial commit: Praeto Excel Sync"
-git remote add origin https://github.com/YOUR_USERNAME/praeto-excel-sync.git
-git push -u origin main
+git commit -m "deploy: praeto excel sync"
+git push
 ```
 
-### Step 2: Deploy Backend on Vercel
+### Step 2: Deploy the backend
 
-1. Go to **[vercel.com](https://vercel.com)** → sign in with GitHub
-2. Click **New Project** → select your repo
-3. **Framework:** Node.js
-4. **Root Directory:** `./backend`
-5. Add environment variables:
-   - `AZURE_CLIENT_ID`
-   - `AZURE_CLIENT_SECRET`
-   - `SESSION_SECRET`
-   - `ONEDRIVE_SHARE_LINK`
-   - `FRONTEND_URL=https://your-frontend-domain.com` (update after frontend deploys)
-   - `BACKEND_URL=https://your-backend.vercel.app`
-6. Click **Deploy**
+1. Go to [vercel.com](https://vercel.com) → sign in with GitHub
+2. **New Project** → select your repo
+3. Set **Root Directory** to `backend`
+4. Add one environment variable:
+   - `FRONTEND_URL` = `https://your-dashboard-url.com` (update after Step 3)
+5. Click **Deploy**
 
-You'll get a URL like: `https://praeto-backend.vercel.app`
+You'll get a URL like `https://praeto-backend.vercel.app` — copy it.
 
-### Step 3: Update Azure App
-
-In Azure Portal → your app registration:
-1. Go to **Authentication** → **Redirect URIs**
-2. Add: `https://praeto-backend.vercel.app/api/auth/callback`
-3. Save
-
-### Step 4: Deploy Frontend (Dashboard)
+### Step 3: Deploy the dashboard
 
 The dashboard is a static HTML file. Options:
-- **Vercel:** Upload `Praeto Projects.dc.html` as a static file (easiest)
-- **GitHub Pages:** Free static hosting
-- **Netlify:** Drag & drop HTML file
 
-Update the dashboard's `backendUrl` prop to point to your Vercel backend:
+**Option A — Vercel static (easiest):**
+1. New Vercel project → select same repo
+2. Root Directory: `.` (project root)
+3. Framework Preset: **Other**
+4. Build Command: leave empty
+5. Output Directory: `.`
+6. Deploy
 
-In your HTML, add to the component:
-```html
-<dc-import name="Praeto Projects" backendUrl="https://praeto-backend.vercel.app"></dc-import>
+**Option B — Netlify drag-and-drop:**
+1. Go to [netlify.com](https://netlify.com) → drag `Praeto Projects.dc.html` into the deploy zone
+
+**Option C — GitHub Pages:**
+Enable GitHub Pages in repo settings → source: main branch, root
+
+### Step 4: Wire it up
+
+In your deployed dashboard, the backend URL defaults to `http://localhost:3001`. To point it at your Vercel backend, open the dashboard HTML and find this line:
+
+```js
+const backend=this.props.backendUrl||'http://localhost:3001';
 ```
 
-Or set it in localStorage from the page that loads it.
+You can override it by editing the `<dc-import>` tag on the page that embeds the component, or by updating the default in the script. The simplest fix: update the fallback URL:
+
+```js
+const backend=this.props.backendUrl||'https://praeto-backend.vercel.app';
+```
+
+Then go back to your backend Vercel project → **Settings → Environment Variables** → update `FRONTEND_URL` to your dashboard's deployed URL.
 
 ---
 
-## Testing the Full Flow
+## Adding a new sheet (ongoing)
 
-1. Dashboard loads → tries to sync from backend
-2. Backend checks for valid token — if missing, shows "Sign in with Microsoft"
-3. Click "Sign in" → redirected to Microsoft login
-4. Authorize → redirected back with token
-5. Dashboard auto-syncs → displays your Excel data
-6. Every 5 min, dashboard pulls latest from OneDrive via backend
+When Praeto adds a new project tracking sheet to OneDrive:
+
+1. Share it as "Anyone with the link can view" (see top of this guide)
+2. Open the dashboard → **⚙ Sheets**
+3. Enter the sheet name and paste the share link
+4. Click **Add sheet**
+
+The sheet is saved to your browser. Each person using the dashboard needs to add their own links — or you can pre-configure them by editing the default `sheets` in the constructor if you want them hardcoded.
 
 ---
 
 ## Troubleshooting
 
+### "NOT_PUBLIC" error on sync
+The share link is not set to "Anyone with the link". Follow the sharing steps at the top of this guide. Company-only or password-protected links will not work.
+
 ### "Backend not responding"
-- Make sure backend is running: `npm run dev` in `/backend`
-- Check `BACKEND_URL` and `FRONTEND_URL` in `.env`
+- Local: make sure `npm run dev` is running in `/backend`
+- Production: check the backend's Vercel deployment logs
 
-### "Sign-in fails"
-- Verify `AZURE_CLIENT_ID` and `AZURE_CLIENT_SECRET` are correct
-- Check that redirect URI in Azure matches `BACKEND_URL/api/auth/callback`
+### Sync succeeds but shows wrong data
+- The parser expects project codes in column A (e.g. `A1`, `B2`) and task numbers in the form `1.1`, `1.2`
+- Data starts on row 4 (rows 1–3 are treated as headers)
+- Check the backend terminal for parse errors
 
-### "Excel not parsing"
-- Make sure your sheet structure matches the expected format (projects in rows with tasks as subtasks)
-- Check backend logs for detailed parse errors
-
-### "Multi-sheet not showing"
-- After sync, check browser console for available sheets
-- Select a sheet from the dropdown in the header
+### Sheet links reset after browser clear
+Sheet links live in `localStorage` under `praeto-sheets-v1`. Clearing browser data removes them — just re-add them via ⚙ Sheets.
 
 ---
 
 ## Architecture
 
 ```
-┌─────────────────┐
-│  Dashboard      │  (Praeto Projects.dc.html)
-│  (Browser)      │
-└────────┬────────┘
-         │ /api/sync, /api/data/:sheet
-         │
-┌────────▼────────────────────────────┐
-│  Backend (Node.js + Express)        │
-│  - OAuth2 + Microsoft Graph         │
-│  - OneDrive polling + Excel parsing │
-└────────┬────────────────────────────┘
-         │ (with access token)
-┌────────▼────────────────────────┐
-│  Microsoft Graph API            │
-│  (OneDrive file download)       │
-└─────────────────────────────────┘
+┌──────────────────────────┐
+│  Dashboard (HTML)        │  Praeto Projects.dc.html
+│  · Sheet registry in     │  stored in browser localStorage
+│    localStorage          │
+└──────────┬───────────────┘
+           │ GET /api/data?shareUrl=<public 1drv.ms link>
+┌──────────▼───────────────────────────────────────────┐
+│  Backend (Node.js + Express, hosted on Vercel)       │
+│  · Encodes share URL → Graph anonymous share token   │
+│  · Downloads file from Microsoft Graph (no auth)     │
+│  · Parses Excel with SheetJS                         │
+│  · Returns JSON to dashboard                         │
+└──────────┬───────────────────────────────────────────┘
+           │ anonymous download (no login needed)
+┌──────────▼───────────────────┐
+│  Microsoft Graph API         │
+│  /v1.0/shares/u!.../         │
+│  driveItem/content           │
+└──────────────────────────────┘
 ```
 
----
-
-## Environment Variables Explained
-
-| Variable | Purpose | Example |
-|----------|---------|---------|
-| `AZURE_CLIENT_ID` | Microsoft app ID | `a1b2c3d4-...` |
-| `AZURE_CLIENT_SECRET` | Microsoft app secret | `~kL.xxx_yyy` |
-| `SESSION_SECRET` | Encrypt session cookies | `my-super-secret-key` |
-| `ONEDRIVE_SHARE_LINK` | Default Excel file URL | `https://1drv.ms/...` |
-| `FRONTEND_URL` | Dashboard origin (CORS) | `http://localhost:3000` |
-| `BACKEND_URL` | API server origin | `http://localhost:3001` |
-| `AZURE_TENANT_ID` | Microsoft tenant | `common` (multi-tenant) |
-
----
-
-## Next Steps
-
-Once live sync is working:
-- [ ] Add inline task editing
-- [ ] Multi-user real-time collaboration
-- [ ] Comments & task notes
-- [ ] Export/reporting
-- [ ] Recurring tasks
-- [ ] Time tracking
-
----
-
-Questions? Check the backend logs:
-```bash
-npm run dev
-# Look for error messages in the terminal
-```
+No OAuth. No tokens. No database. The only requirement is the OneDrive file being publicly shared.
