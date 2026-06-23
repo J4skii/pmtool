@@ -1,0 +1,19 @@
+{
+  "buildCommand": "npm install",
+  "outputDirectory": "./",
+  "framework": "nodejs",
+  "nodeVersion": "18.x",
+  "functions": {
+    "server.js": {
+      "runtime": "nodejs18.x"
+    }
+  },
+  "env": [
+    "AZURE_CLIENT_ID",
+    "AZURE_CLIENT_SECRET",
+    "SESSION_SECRET",
+    "ONEDRIVE_SHARE_LINK",
+    "FRONTEND_URL",
+    "BACKEND_URL"
+  ]
+}

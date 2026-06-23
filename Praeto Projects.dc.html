@@ -1,0 +1,734 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700;800&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    *{box-sizing:border-box}
+    html,body{margin:0;padding:0}
+    ::-webkit-scrollbar{height:10px;width:10px}
+    ::-webkit-scrollbar-track{background:transparent}
+    ::-webkit-scrollbar-thumb{background:#d3d1c9;border-radius:8px;border:2px solid transparent;background-clip:content-box}
+    ::-webkit-scrollbar-thumb:hover{background:#bdbab0;background-clip:content-box}
+    @keyframes drawerIn{from{transform:translateX(24px);opacity:0}to{transform:none;opacity:1}}
+    @keyframes fadeIn{from{opacity:0}to{opacity:1}}
+  </style>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+</helmet>
+<div style="font-family:'Hanken Grotesk',-apple-system,sans-serif;background:#F4F3EF;min-height:100vh;color:#16191C;-webkit-font-smoothing:antialiased">
+
+  <header style="position:sticky;top:0;z-index:30;background:rgba(244,243,239,.86);backdrop-filter:blur(12px);border-bottom:1px solid #E5E3DD">
+    <div style="max-width:1480px;margin:0 auto;padding:14px 28px;display:flex;align-items:center;gap:24px">
+      <div style="display:flex;align-items:center;gap:11px">
+        <div style="width:30px;height:30px;border-radius:8px;background:{{ accent }};display:flex;align-items:center;justify-content:center;flex:none">
+          <div style="width:11px;height:11px;border-radius:3px;background:#fff;transform:rotate(45deg)"></div>
+        </div>
+        <div style="line-height:1.05">
+          <div style="font-size:17px;font-weight:800;letter-spacing:-.02em">Praeto</div>
+          <div style="font-size:10.5px;font-weight:600;color:#8A8F95;letter-spacing:.08em;text-transform:uppercase">Project Desk</div>
+        </div>
+      </div>
+
+      <div style="display:flex;gap:3px;background:#EAE8E1;padding:3px;border-radius:11px">
+        <sc-for list="{{ viewTabs }}" as="tab" hint-placeholder-count="3">
+          <button onClick="{{ tab.onClick }}" style="{{ tab.style }}">{{ tab.label }}</button>
+        </sc-for>
+      </div>
+
+      <div style="flex:1"></div>
+
+      <div style="position:relative;display:flex;align-items:center">
+        <span style="position:absolute;left:12px;color:#A7ABB0;font-size:14px">⌕</span>
+        <input value="{{ q }}" onInput="{{ onSearch }}" placeholder="Search…" style="width:180px;border:1px solid #E0DED7;background:#fff;border-radius:10px;padding:9px 12px 9px 30px;font-family:inherit;font-size:13px;color:#16191C;outline:none;flex-shrink:1;min-width:0"/>
+      </div>
+
+      <div style="display:flex;align-items:center;gap:7px;flex-shrink:0">
+        <input id="praeto-file-import" type="file" accept=".csv,.xlsx,.xls" onChange="{{ onFileImport }}" style="display:none"/>
+        <sc-if value="{{ hasSheets }}" hint-placeholder-val="{{ false }}">
+          <select onChange="{{ onSheetChange }}" value="{{ activeSheet }}" style="border:1px solid #E0DED7;background:#fff;color:#7A7F85;cursor:pointer;font-family:inherit;font-size:12px;font-weight:600;padding:7px 11px;border-radius:9px;outline:none">
+            <sc-for list="{{ availableSheets }}" as="s" hint-placeholder-count="2">
+              <option value="{{ s }}">{{ s }}</option>
+            </sc-for>
+          </select>
+        </sc-if>
+        <sc-if value="{{ needsAuth }}" hint-placeholder-val="{{ false }}">
+          <a href="{{ authUrl }}" style="text-decoration:none">
+            <button style="border:1px solid #E0DED7;background:#fff;color:#4D5258;cursor:pointer;font-family:inherit;font-size:12px;font-weight:600;padding:7px 11px;border-radius:9px;white-space:nowrap">Sign in with Microsoft</button>
+          </a>
+        </sc-if>
+        <button onClick="{{ onSync }}" style="{{ syncBtnStyle }}" title="{{ syncStatusText }}">{{ syncBtn }}</button>
+        <button onClick="{{ onManualImport }}" title="Import a CSV or XLSX export from OneDrive" style="border:1px solid #E0DED7;background:#fff;color:#7A7F85;cursor:pointer;font-family:inherit;font-size:12px;font-weight:600;padding:7px 11px;border-radius:9px;white-space:nowrap">↑ Import</button>
+        <sc-if value="{{ hasSyncStatus }}" hint-placeholder-val="{{ false }}">
+          <span style="font-size:11.5px;font-weight:700;color:{{ syncStatusColor }};white-space:nowrap">{{ syncStatusText }}</span>
+        </sc-if>
+      </div>
+
+      <div style="display:flex;flex-direction:column;align-items:flex-end;line-height:1.1">
+        <div style="font-size:10px;font-weight:600;color:#8A8F95;letter-spacing:.07em;text-transform:uppercase">Today</div>
+        <div style="font-size:13px;font-weight:700;font-family:'Geist Mono',monospace">Mon 22 Jun 2026</div>
+      </div>
+    </div>
+  </header>
+
+  <main style="max-width:1480px;margin:0 auto;padding:24px 28px 80px">
+
+    <!-- KPI strip -->
+    <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:14px;margin-bottom:22px">
+      <sc-for list="{{ kpis }}" as="k" hint-placeholder-count="5">
+        <div style="background:#fff;border:1px solid #EAE8E1;border-radius:14px;padding:16px 17px;display:flex;flex-direction:column;gap:9px;box-shadow:0 1px 2px rgba(20,23,28,.03)">
+          <div style="display:flex;align-items:center;justify-content:space-between">
+            <span style="font-size:11.5px;font-weight:600;color:#7A7F85;letter-spacing:.01em">{{ k.label }}</span>
+            <span style="width:8px;height:8px;border-radius:50%;background:{{ k.dot }}"></span>
+          </div>
+          <div style="display:flex;align-items:baseline;gap:7px">
+            <span style="font-size:30px;font-weight:800;letter-spacing:-.03em;line-height:1">{{ k.value }}</span>
+            <span style="font-size:12px;font-weight:600;color:#9AA0A6">{{ k.suffix }}</span>
+          </div>
+          <div style="font-size:11.5px;color:#9AA0A6;font-weight:500">{{ k.note }}</div>
+        </div>
+      </sc-for>
+    </div>
+
+    <!-- Filters -->
+    <div style="display:flex;align-items:center;gap:18px;margin-bottom:20px;flex-wrap:wrap">
+      <div style="display:flex;align-items:center;gap:8px">
+        <span style="font-size:11px;font-weight:700;color:#8A8F95;letter-spacing:.06em;text-transform:uppercase;margin-right:2px">Owner</span>
+        <sc-for list="{{ ownerChips }}" as="c" hint-placeholder-count="4">
+          <button onClick="{{ c.onClick }}" style="{{ c.style }}">
+            <sc-if value="{{ c.hasDot }}" hint-placeholder-val="{{ true }}"><span style="width:7px;height:7px;border-radius:50%;background:{{ c.color }};display:inline-block"></span></sc-if>
+            <span>{{ c.label }}</span>
+          </button>
+        </sc-for>
+      </div>
+      <div style="width:1px;height:20px;background:#E0DED7"></div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <span style="font-size:11px;font-weight:700;color:#8A8F95;letter-spacing:.06em;text-transform:uppercase;margin-right:2px">Priority</span>
+        <sc-for list="{{ prioChips }}" as="c" hint-placeholder-count="5">
+          <button onClick="{{ c.onClick }}" style="{{ c.style }}">
+            <sc-if value="{{ c.hasDot }}" hint-placeholder-val="{{ true }}"><span style="width:7px;height:7px;border-radius:50%;background:{{ c.color }};display:inline-block"></span></sc-if>
+            <span>{{ c.label }}</span>
+          </button>
+        </sc-for>
+      </div>
+    </div>
+
+    <!-- BOARD -->
+    <sc-if value="{{ isBoard }}" hint-placeholder-val="{{ true }}">
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:18px;align-items:start">
+        <sc-for list="{{ columns }}" as="col" hint-placeholder-count="3">
+          <div style="background:#EFEDE6;border-radius:16px;padding:6px">
+            <div style="display:flex;align-items:center;justify-content:space-between;padding:13px 14px 11px">
+              <div>
+                <div style="font-size:14px;font-weight:800;letter-spacing:-.01em">{{ col.label }}</div>
+                <div style="font-size:11px;color:#8A8F95;font-weight:500;margin-top:1px">{{ col.sub }}</div>
+              </div>
+              <div style="font-size:12px;font-weight:700;color:#7A7F85;background:#fff;border:1px solid #E5E3DD;border-radius:20px;padding:3px 10px">{{ col.count }}</div>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:10px;padding:0 6px 6px">
+              <sc-for list="{{ col.projects }}" as="p" hint-placeholder-count="4">
+                <div onClick="{{ p.onClick }}" style="background:#fff;border:1px solid #EAE8E1;border-radius:13px;padding:14px;cursor:pointer;box-shadow:0 1px 2px rgba(20,23,28,.03);transition:box-shadow .15s,transform .15s" style-hover="box-shadow:0 6px 18px rgba(20,23,28,.09);transform:translateY(-1px)">
+                  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:9px">
+                    <span style="font-family:'Geist Mono',monospace;font-size:10.5px;font-weight:600;color:#9AA0A6;background:#F4F3EF;padding:2px 7px;border-radius:6px">{{ p.code }}</span>
+                    <span style="font-size:10.5px;font-weight:700;color:{{ p.prioColor }};display:flex;align-items:center;gap:5px"><span style="width:7px;height:7px;border-radius:50%;background:{{ p.prioColor }}"></span>{{ p.priority }}</span>
+                  </div>
+                  <div style="font-size:15px;font-weight:700;letter-spacing:-.01em;line-height:1.25;margin-bottom:12px">{{ p.name }}</div>
+                  <div style="display:flex;align-items:center;gap:8px;margin-bottom:11px">
+                    <div style="flex:1;height:6px;background:#EDEBE4;border-radius:6px;overflow:hidden">
+                      <div style="height:100%;border-radius:6px;background:{{ accent }};width:{{ p.pct }}%"></div>
+                    </div>
+                    <span style="font-size:11px;font-weight:700;color:#7A7F85;font-family:'Geist Mono',monospace">{{ p.done }}/{{ p.total }}</span>
+                  </div>
+                  <div style="display:flex;align-items:center;justify-content:space-between">
+                    <div style="display:flex;align-items:center">
+                      <sc-for list="{{ p.avatars }}" as="a" hint-placeholder-count="1">
+                        <span style="width:22px;height:22px;border-radius:50%;background:{{ a.color }};color:#fff;font-size:9.5px;font-weight:700;display:flex;align-items:center;justify-content:center;border:2px solid #fff;margin-left:-6px;font-family:'Geist Mono',monospace">{{ a.init }}</span>
+                      </sc-for>
+                    </div>
+                    <span style="font-size:11px;font-weight:700;color:{{ p.flagColor }};background:{{ p.flagBg }};padding:3px 8px;border-radius:7px">{{ p.flag }}</span>
+                  </div>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+        </sc-for>
+      </div>
+    </sc-if>
+
+    <!-- TIMELINE -->
+    <sc-if value="{{ isTimeline }}" hint-placeholder-val="{{ true }}">
+      <div style="background:#fff;border:1px solid #EAE8E1;border-radius:16px;overflow:hidden;box-shadow:0 1px 2px rgba(20,23,28,.03)">
+        <div style="overflow-x:auto">
+          <div style="min-width:{{ gantt.fullWidth }}px">
+            <!-- header -->
+            <div style="display:flex;position:sticky;top:0;z-index:6;background:#fff;border-bottom:1px solid #E5E3DD">
+              <div style="width:262px;flex:none;padding:10px 16px;display:flex;align-items:flex-end;border-right:1px solid #EAE8E1;position:sticky;left:0;z-index:7;background:#fff;font-size:11px;font-weight:700;color:#8A8F95;letter-spacing:.05em;text-transform:uppercase">Project / Task</div>
+              <div style="flex:none;width:{{ gantt.trackWidth }}px">
+                <div style="display:flex;border-bottom:1px solid #F0EEE7">
+                  <sc-for list="{{ gantt.months }}" as="m" hint-placeholder-count="3">
+                    <div style="width:{{ m.width }}px;flex:none;padding:7px 10px;font-size:12px;font-weight:800;letter-spacing:-.01em;border-left:1px solid #F0EEE7">{{ m.label }}</div>
+                  </sc-for>
+                </div>
+                <div style="display:flex">
+                  <sc-for list="{{ gantt.days }}" as="d" hint-placeholder-count="20">
+                    <div style="width:30px;flex:none;text-align:center;padding:5px 0;font-size:10px;font-weight:600;font-family:'Geist Mono',monospace;color:{{ d.color }};background:{{ d.bg }}">{{ d.n }}</div>
+                  </sc-for>
+                </div>
+              </div>
+            </div>
+            <!-- body -->
+            <div style="position:relative">
+              <div style="position:absolute;top:0;bottom:0;left:262px;z-index:0;pointer-events:none">
+                <sc-for list="{{ gantt.weekends }}" as="w" hint-placeholder-count="8">
+                  <div style="position:absolute;top:0;bottom:0;width:30px;background:#FAF9F6;left:{{ w.left }}px"></div>
+                </sc-for>
+              </div>
+              <div style="position:absolute;top:0;bottom:0;width:2px;background:{{ accent }};z-index:4;pointer-events:none;left:{{ gantt.todayAbs }}px">
+                <div style="position:absolute;top:0;left:-21px;background:{{ accent }};color:#fff;font-size:9px;font-weight:700;padding:2px 6px;border-radius:0 0 6px 6px;font-family:'Geist Mono',monospace">TODAY</div>
+              </div>
+              <sc-for list="{{ gantt.rows }}" as="r" hint-placeholder-count="14">
+                <div style="display:flex;align-items:stretch;height:{{ r.h }}px;border-bottom:1px solid #F3F1EA;position:relative;z-index:1;background:{{ r.rowBg }}">
+                  <div style="width:262px;flex:none;display:flex;align-items:center;gap:8px;padding:0 16px;position:sticky;left:0;z-index:2;background:{{ r.labelBg }};border-right:1px solid #EAE8E1">
+                    <sc-if value="{{ r.isGroup }}" hint-placeholder-val="{{ true }}">
+                      <span style="font-family:'Geist Mono',monospace;font-size:10px;font-weight:600;color:#9AA0A6;background:#F4F3EF;padding:2px 6px;border-radius:5px;flex:none">{{ r.code }}</span>
+                      <span style="font-size:13px;font-weight:800;letter-spacing:-.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ r.label }}</span>
+                    </sc-if>
+                    <sc-if value="{{ r.isTask }}" hint-placeholder-val="{{ true }}">
+                      <span style="width:6px;height:6px;border-radius:50%;background:{{ r.color }};flex:none;margin-left:8px"></span>
+                      <span style="font-size:12.5px;font-weight:500;color:#3D4248;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ r.label }}</span>
+                    </sc-if>
+                  </div>
+                  <div style="position:relative;flex:none;width:{{ gantt.trackWidth }}px">
+                    <sc-if value="{{ r.hasBar }}" hint-placeholder-val="{{ true }}">
+                      <div style="position:absolute;border-radius:6px;display:flex;align-items:center;top:{{ r.barTop }}px;height:{{ r.barH }}px;left:{{ r.left }}px;width:{{ r.width }}px;background:{{ r.barColor }};box-shadow:0 1px 2px rgba(20,23,28,.12)"></div>
+                    </sc-if>
+                  </div>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+        </div>
+      </div>
+    </sc-if>
+
+    <!-- TABLE -->
+    <sc-if value="{{ isTable }}" hint-placeholder-val="{{ true }}">
+      <div style="background:#fff;border:1px solid #EAE8E1;border-radius:16px;overflow:hidden;box-shadow:0 1px 2px rgba(20,23,28,.03)">
+        <div style="display:grid;grid-template-columns:70px 1fr 150px 110px 110px 100px 100px 120px;gap:0;padding:13px 18px;border-bottom:1px solid #EAE8E1;background:#FAF9F6;font-size:11px;font-weight:700;color:#8A8F95;letter-spacing:.04em;text-transform:uppercase">
+          <sc-for list="{{ tableCols }}" as="c" hint-placeholder-count="8">
+            <div onClick="{{ c.onClick }}" style="{{ c.style }}">{{ c.label }}{{ c.arrow }}</div>
+          </sc-for>
+        </div>
+        <sc-for list="{{ tableRows }}" as="t" hint-placeholder-count="12">
+          <div onClick="{{ t.onClick }}" style="display:grid;grid-template-columns:70px 1fr 150px 110px 110px 100px 100px 120px;gap:0;padding:12px 18px;border-bottom:1px solid #F3F1EA;align-items:center;cursor:pointer;font-size:13px" style-hover="background:#FAF9F6">
+            <div style="font-family:'Geist Mono',monospace;font-size:11px;font-weight:600;color:#9AA0A6">{{ t.code }}</div>
+            <div style="font-weight:600;color:#16191C;padding-right:12px">{{ t.name }}</div>
+            <div style="color:#6B7177;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding-right:8px">{{ t.project }}</div>
+            <div style="display:flex;align-items:center;gap:7px">
+              <span style="width:20px;height:20px;border-radius:50%;background:{{ t.ownerColor }};color:#fff;font-size:9px;font-weight:700;display:flex;align-items:center;justify-content:center;font-family:'Geist Mono',monospace;flex:none">{{ t.ownerInit }}</span>
+            </div>
+            <div><span style="font-size:11.5px;font-weight:700;color:{{ t.prioColor }};display:flex;align-items:center;gap:5px"><span style="width:7px;height:7px;border-radius:50%;background:{{ t.prioColor }}"></span>{{ t.priority }}</span></div>
+            <div style="font-family:'Geist Mono',monospace;font-size:11.5px;color:#7A7F85">{{ t.start }}</div>
+            <div style="font-family:'Geist Mono',monospace;font-size:11.5px;color:{{ t.finishColor }};font-weight:{{ t.finishWeight }}">{{ t.finish }}</div>
+            <div><span style="font-size:11px;font-weight:700;color:{{ t.statusColor }};background:{{ t.statusBg }};padding:3px 9px;border-radius:7px">{{ t.statusLabel }}</span></div>
+          </div>
+        </sc-for>
+      </div>
+    </sc-if>
+
+  </main>
+
+  <!-- DRAWER -->
+  <sc-if value="{{ hasSel }}" hint-placeholder-val="{{ false }}">
+    <div onClick="{{ closeDrawer }}" style="position:fixed;inset:0;z-index:40;background:rgba(20,23,28,.34);animation:fadeIn .18s ease"></div>
+    <div style="position:fixed;top:0;right:0;bottom:0;width:480px;max-width:94vw;z-index:41;background:#F7F6F2;box-shadow:-8px 0 40px rgba(20,23,28,.18);display:flex;flex-direction:column;animation:drawerIn .22s cubic-bezier(.2,.8,.2,1)">
+      <div style="padding:22px 24px 18px;border-bottom:1px solid #E5E3DD;background:#fff">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+          <span style="font-family:'Geist Mono',monospace;font-size:11px;font-weight:600;color:#9AA0A6;background:#F4F3EF;padding:3px 9px;border-radius:7px">{{ sel.code }}</span>
+          <button onClick="{{ closeDrawer }}" style="width:30px;height:30px;border-radius:9px;border:1px solid #E5E3DD;background:#fff;cursor:pointer;font-size:16px;color:#7A7F85;display:flex;align-items:center;justify-content:center">✕</button>
+        </div>
+        <div style="font-size:22px;font-weight:800;letter-spacing:-.02em;line-height:1.15;margin-bottom:6px">{{ sel.name }}</div>
+        <div style="font-size:12.5px;color:#8A8F95;font-weight:500;margin-bottom:16px">{{ sel.catLabel }}</div>
+        <div style="display:flex;gap:10px">
+          <div style="flex:1;background:#F4F3EF;border-radius:11px;padding:11px 13px">
+            <div style="font-size:10.5px;font-weight:600;color:#8A8F95;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">Progress</div>
+            <div style="display:flex;align-items:center;gap:8px">
+              <div style="flex:1;height:6px;background:#E4E2DB;border-radius:6px;overflow:hidden"><div style="height:100%;background:{{ accent }};border-radius:6px;width:{{ sel.pct }}%"></div></div>
+              <span style="font-size:12px;font-weight:700;font-family:'Geist Mono',monospace">{{ sel.pct }}%</span>
+            </div>
+          </div>
+          <div style="background:#F4F3EF;border-radius:11px;padding:11px 13px;min-width:96px">
+            <div style="font-size:10.5px;font-weight:600;color:#8A8F95;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">Priority</div>
+            <div style="font-size:13px;font-weight:800;color:{{ sel.prioColor }};display:flex;align-items:center;gap:6px"><span style="width:8px;height:8px;border-radius:50%;background:{{ sel.prioColor }}"></span>{{ sel.priority }}</div>
+          </div>
+        </div>
+      </div>
+      <div style="flex:1;overflow-y:auto;padding:18px 24px 40px">
+        <div style="font-size:11px;font-weight:700;color:#8A8F95;letter-spacing:.06em;text-transform:uppercase;margin-bottom:12px">Tasks · {{ sel.total }}</div>
+        <div style="display:flex;flex-direction:column;gap:9px">
+          <sc-for list="{{ sel.tasks }}" as="t" hint-placeholder-count="5">
+            <div style="background:#fff;border:1px solid #EAE8E1;border-radius:12px;padding:13px 14px">
+              <div style="display:flex;align-items:flex-start;gap:11px">
+                <button onClick="{{ t.onToggle }}" title="Click to change status" style="width:22px;height:22px;border-radius:7px;border:2px solid {{ t.statusColor }};background:{{ t.checkBg }};cursor:pointer;flex:none;margin-top:1px;color:#fff;font-size:12px;font-weight:800;display:flex;align-items:center;justify-content:center;padding:0">{{ t.check }}</button>
+                <div style="flex:1;min-width:0">
+                  <div style="font-size:13.5px;font-weight:600;line-height:1.3;color:{{ t.nameColor }};text-decoration:{{ t.strike }}">{{ t.name }}</div>
+                  <sc-if value="{{ t.hasNote }}" hint-placeholder-val="{{ false }}">
+                    <div style="font-size:11.5px;color:#9AA0A6;font-style:italic;margin-top:3px">“{{ t.note }}”</div>
+                  </sc-if>
+                  <div style="display:flex;align-items:center;gap:10px;margin-top:9px;flex-wrap:wrap">
+                    <span style="font-size:10.5px;font-weight:700;color:{{ t.statusColor }};background:{{ t.statusBg }};padding:2px 8px;border-radius:6px">{{ t.statusLabel }}</span>
+                    <span style="display:flex;align-items:center;gap:5px;font-size:11px;font-weight:600;color:#7A7F85"><span style="width:17px;height:17px;border-radius:50%;background:{{ t.ownerColor }};color:#fff;font-size:8px;font-weight:700;display:flex;align-items:center;justify-content:center;font-family:'Geist Mono',monospace">{{ t.ownerInit }}</span>{{ t.owner }}</span>
+                    <span style="font-size:11px;font-weight:700;color:{{ t.prioColor }};display:flex;align-items:center;gap:4px"><span style="width:6px;height:6px;border-radius:50%;background:{{ t.prioColor }}"></span>{{ t.priority }}</span>
+                    <sc-if value="{{ t.hasDates }}" hint-placeholder-val="{{ false }}">
+                      <span style="font-size:11px;font-family:'Geist Mono',monospace;color:{{ t.dateColor }};font-weight:{{ t.dateWeight }}">{{ t.dateLabel }}</span>
+                    </sc-if>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+    </div>
+  </sc-if>
+
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1440,&quot;height&quot;:940},&quot;accent&quot;:{&quot;editor&quot;:&quot;color&quot;,&quot;default&quot;:&quot;#0E5C4A&quot;,&quot;tsType&quot;:&quot;string&quot;},&quot;defaultView&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;board&quot;,&quot;timeline&quot;,&quot;table&quot;],&quot;default&quot;:&quot;board&quot;,&quot;tsType&quot;:&quot;string&quot;},&quot;showWeekend&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;}}">
+class Component extends DCLogic {
+  constructor(props){
+    super(props);
+    this.TODAY='2026-06-22';
+    this.RS='2026-05-25';
+    this.RE='2026-07-15';
+    this.DW=30;
+    this.ownerMeta={
+      'Jared':{init:'Ja',color:'#0E5C4A'},
+      'Josh':{init:'Jo',color:'#4F46E5'},
+      'Tiyane':{init:'Ti',color:'#B45309'},
+    };
+    this.prio={'Urgent':'#C0392B','High':'#D97706','Medium':'#2563EB','Low':'#94A3B8'};
+    this.sm={
+      todo:{label:'To do',color:'#94A3B8',bg:'#F1F0EA'},
+      active:{label:'In progress',color:'#2563EB',bg:'#EAF1FC'},
+      done:{label:'Done',color:'#16A34A',bg:'#E7F4EC'},
+      blocked:{label:'Blocked',color:'#C0392B',bg:'#FBEAE8'},
+    };
+    this.catMeta={
+      A:{label:'Pipeline',sub:'Prospects & new business'},
+      B:{label:'Live Deals',sub:'Active quotes & tenders'},
+      C:{label:'Internal & Product',sub:'Build & operations'},
+    };
+    this.data=[
+      {id:'A1',cat:'A',name:'Iziko Holdings',owner:'Jared',priority:'High',tasks:[
+        {n:'Collection of data',o:'',p:'',s:'done',f:'2026-05-25',t:'2026-05-31'},
+        {n:'Analysis',o:'',p:'',s:'done'},
+        {n:'Submission to AON',o:'',p:'',s:'active'},
+        {n:'Market quoting',o:'Tiyane',p:'High',s:'active',f:'2026-06-04',t:'2026-06-25'},
+        {n:'Estimate Quote',o:'Tiyane',p:'High',s:'active',f:'2026-06-22',t:'2026-06-22'},
+        {n:'Final Quote',o:'',p:'',s:'todo',f:'2026-07-09',t:'2026-07-09'},
+      ]},
+      {id:'A2',cat:'A',name:'Lunga',owner:'Jared',priority:'Low',tasks:[
+        {n:'Follow up with Lunga',o:'Jared',p:'Low',s:'active',f:'2026-06-24',t:'2026-06-24',note:'Check up every week'},
+      ]},
+      {id:'A3',cat:'A',name:'Mthiyane',owner:'Jared',priority:'Low',tasks:[
+        {n:'Await broker to process claim',o:'Jared',p:'Medium',s:'blocked',f:'2026-07-01',t:'2026-07-01'},
+      ]},
+      {id:'A4',cat:'A',name:'Nkosi Storage Facility',owner:'Jared',priority:'Low',tasks:[
+        {n:'Ask Thando when we can quote',o:'',p:'',s:'todo'},
+        {n:'Quote on his development',o:'Jared',p:'Medium',s:'todo',f:'2026-06-30',t:'2026-06-30'},
+      ]},
+      {id:'A5',cat:'A',name:'MCPM',owner:'Jared',priority:'Medium',tasks:[
+        {n:'Ask Mpumelelo when we can quote',o:'Jared',p:'Medium',s:'todo',f:'2026-06-30',t:'2026-06-30'},
+      ]},
+      {id:'A6',cat:'A',name:'Mutualism',owner:'Jared',priority:'Low',tasks:[
+        {n:'Ask Mason',o:'Jared',p:'Medium',s:'todo',f:'2026-06-30',t:'2026-06-30'},
+      ]},
+      {id:'A7',cat:'A',name:'Inkwazi Partners — Insurance',owner:'Jared',priority:'High',tasks:[
+        {n:'Ask Peter',o:'Jared',p:'High',s:'active',f:'2026-06-22',t:'2026-06-30'},
+        {n:'Ask Dean',o:'Jared',p:'High',s:'todo',f:'2026-06-30',t:'2026-06-30'},
+        {n:'Ask Rorke',o:'Jared',p:'High',s:'todo',f:'2026-06-30',t:'2026-06-30'},
+        {n:'Quote for the Ferns',o:'Jared',p:'High',s:'todo',f:'2026-06-30',t:'2026-06-30'},
+      ]},
+      {id:'A8',cat:'A',name:'Lorna',owner:'Jared',priority:'High',tasks:[
+        {n:'Trust Employee Benefits',o:'Jared',p:'Medium',s:'active',f:'2026-06-22',t:'2026-06-22'},
+        {n:'NEF Insurance',o:'Jared',p:'Medium',s:'active',f:'2026-06-22',t:'2026-06-22'},
+        {n:'JV Agreement + Commission split',o:'Josh',p:'High',s:'active',f:'2026-06-11',t:'2026-06-26'},
+      ]},
+      {id:'B1',cat:'B',name:'Elhanzeni Tender',owner:'Jared',priority:'High',tasks:[
+        {n:'Send quote to Walter to prepare',o:'',p:'',s:'done'},
+        {n:'Follow up with Walter',o:'',p:'',s:'done'},
+        {n:'Follow up with Lucille',o:'',p:'',s:'done'},
+        {n:'Respond to Lucille',o:'',p:'',s:'done'},
+        {n:'Send to other underwriters',o:'',p:'',s:'done'},
+        {n:'Follow up feedback from UW',o:'',p:'',s:'done',f:'2026-06-12',t:'2026-06-12'},
+        {n:'Fill in proposal form for CL',o:'',p:'',s:'done',f:'2026-06-17',t:'2026-06-17'},
+        {n:'Compile quote',o:'',p:'',s:'active'},
+        {n:'Submission',o:'',p:'High',s:'active',f:'2026-06-17',t:'2026-06-17'},
+      ]},
+      {id:'B2',cat:'B',name:'MPTA Guardrisk Quote',owner:'Jared',priority:'Urgent',tasks:[
+        {n:'Find reason behind July switch',o:'',p:'',s:'done'},
+        {n:'Collect policy schedule + claims history',o:'',p:'',s:'done'},
+        {n:'Develop negotiation model',o:'Jared',p:'Medium',s:'active',f:'2026-06-22',t:'2026-06-22'},
+        {n:'Present internally',o:'Jared',p:'Medium',s:'todo',f:'2026-06-23',t:'2026-06-23'},
+        {n:'Amend',o:'Jared',p:'Medium',s:'todo',f:'2026-06-23',t:'2026-06-24'},
+        {n:'Ask Walter to quote on Lombard',o:'Jared',p:'High',s:'done',f:'2026-06-15',t:'2026-06-15'},
+        {n:'Quote from Walter',o:'Jared',p:'Urgent',s:'active',f:'2026-06-19',t:'2026-06-22'},
+        {n:'Understand process to onboard',o:'Jared',p:'Urgent',s:'active',f:'2026-06-22',t:'2026-06-22'},
+      ]},
+      {id:'B3',cat:'B',name:'Umgeni',owner:'Jared',priority:'Low',tasks:[
+        {n:'Ask to follow up',o:'Jared',p:'Medium',s:'todo',f:'2026-06-30',t:'2026-06-30'},
+      ]},
+      {id:'C1',cat:'C',name:'Praetoflow',owner:'Jared',priority:'High',tasks:[
+        {n:'Delivery',o:'Jared & Josh',p:'Urgent',s:'active',f:'2026-06-22',t:'2026-06-22'},
+        {n:'Introduce Breyten',o:'Jared & Josh',p:'Urgent',s:'done',f:'2026-06-19',t:'2026-06-19'},
+        {n:'Product build for Funeral segment',o:'Jared & Josh',p:'Medium',s:'active',f:'2026-06-22',t:'2026-06-29'},
+        {n:'Compliance product build',o:'Jared & Josh',p:'Medium',s:'todo'},
+      ]},
+      {id:'C2',cat:'C',name:'Tech Co Structure',owner:'Jared',priority:'Medium',tasks:[
+        {n:'Design structure',o:'Jared',p:'High',s:'done',f:'2026-06-20',t:'2026-06-20'},
+        {n:'Buy-in on structure',o:'Jared & Josh',p:'High',s:'active',f:'2026-06-26',t:'2026-06-26'},
+      ]},
+      {id:'C3',cat:'C',name:'Operating Model',owner:'Jared',priority:'Medium',tasks:[
+        {n:'Understanding the why',o:'Josh',p:'Urgent',s:'active'},
+      ]},
+    ];
+    this.data.forEach(p=>p.tasks.forEach((t,i)=>{t.uid=p.id+'#'+i; t.o=t.o||p.owner; t.p=t.p||p.priority;}));
+    let ov={};
+    try{ov=JSON.parse(localStorage.getItem('praeto-status-v2')||'{}')}catch(e){}
+    const dv=(props&&props.defaultView)||'board';
+    this.state={view:dv,owner:'all',prio:'all',q:'',sel:null,ov,sort:'finish',sortDir:1,syncState:'idle',syncMsg:'',lastSync:'',backendAuth:false,backendReady:false,activeSheet:'',availableSheets:[],authUrl:''};
+  }
+
+  componentDidMount(){
+    const backend=this.props.backendUrl||'http://localhost:3001';
+    this.backend=backend;
+    this.checkAuth();
+    this.trySync();
+    this._si=setInterval(()=>this.trySync(),5*60*1000);
+  }
+  componentWillUnmount(){if(this._si)clearInterval(this._si);}
+
+  async checkAuth(){
+    try{
+      const r=await fetch(this.backend+'/api/auth/status');
+      const st=await r.json();
+      this.setState({backendAuth:st.authenticated,backendReady:true});
+    }catch(e){
+      this.setState({backendReady:false});
+    }
+  }
+
+  async trySync(){
+    if(!this.state.backendReady)return;
+    this.setState({syncState:'loading',syncMsg:'Pulling from Excel…'});
+    try{
+      const res=await fetch(this.backend+'/api/sync',{
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({shareUrl:''})
+      });
+      if(res.status===401){
+        this.setState({syncState:'error',syncMsg:'Sign in with Microsoft',authUrl:this.backend+'/api/auth/login'});
+        return;
+      }
+      if(!res.ok)throw new Error('HTTP '+res.status);
+      const d=await res.json();
+      if(!d.success)throw new Error(d.error);
+      const sheet=this.state.activeSheet||d.sheets[0]||'Sheet1';
+      const dataRes=await fetch(this.backend+'/api/data/'+encodeURIComponent(sheet));
+      if(!dataRes.ok)throw new Error('Failed to get data');
+      const projData=await dataRes.json();
+      this._applyData(projData.projects);
+      const n=new Date();
+      this.setState({syncState:'done',syncMsg:'Live · '+n.getHours()+':'+String(n.getMinutes()).padStart(2,'0'),lastSync:n.toISOString(),activeSheet:sheet,availableSheets:d.sheets});
+    }catch(e){
+      const m=String(e.message||e);
+      this.setState({syncState:'error',syncMsg:m.slice(0,50)});
+    }
+  }
+
+  _applyData(projects){
+    const existOv=this.state.ov||{};
+    projects.forEach(p=>p.tasks.forEach((t,i)=>{
+      t.uid=p.id+'#'+i;
+      if(!t.o||t.o==='')t.o=p.owner;
+      if(!t.p||t.p==='')t.p=p.priority||'Medium';
+      if(!t.s)t.s='todo';
+    }));
+    this.data=projects;
+  }
+
+  parseWorkbook(wb){
+    const ws=wb.Sheets[wb.SheetNames[0]];
+    const rows=XLSX.utils.sheet_to_json(ws,{header:1,defval:''});
+    return this.parseRows(rows);
+  }
+
+  parseRows(rows){
+    const dr=rows.slice(3);
+    const projects=[];let cur=null;
+    const pRe=/^[A-Za-z]\d+$/,tRe=/^\d+\.\d+$/;
+    dr.forEach(row=>{
+      const code=String(row[0]||'').trim(),name=String(row[1]||'').trim();
+      if(!code&&!name)return;
+      const owner=String(row[2]||'').trim(),prio=this.normPrio(String(row[3]||'').trim());
+      const start=this.xlDate(row[4]),finish=this.xlDate(row[5]);
+      const cat=code[0]&&/[A-Za-z]/.test(code[0])?code[0].toUpperCase():'';
+      if(pRe.test(code)&&name&&cat){
+        cur={id:code,cat,name,owner,priority:prio||'Medium',tasks:[]};
+        projects.push(cur);
+      }else if(tRe.test(code)&&name&&cur){
+        cur.tasks.push({n:name,o:owner,p:prio||cur.priority,s:'todo',f:start,t:finish,note:''});
+      }
+    });
+    return projects.filter(p=>p.tasks.length);
+  }
+
+  normPrio(p){const m={urgent:'Urgent',high:'High',medium:'Medium',low:'Low'};return m[(p||'').toLowerCase().trim()]||p||'';}
+
+  xlDate(v){
+    if(!v)return '';
+    if(v instanceof Date){
+      const y=v.getFullYear(),m=String(v.getMonth()+1).padStart(2,'0'),d=String(v.getDate()).padStart(2,'0');
+      return `${y}-${m}-${d}`;
+    }
+    if(typeof v==='number'&&v>40000){
+      const d=new Date(Math.round((v-25569)*86400000));
+      return d.getUTCFullYear()+'-'+String(d.getUTCMonth()+1).padStart(2,'0')+'-'+String(d.getUTCDate()).padStart(2,'0');
+    }
+    if(typeof v==='string'&&/^\d{4}-\d{2}-\d{2}/.test(v))return v.slice(0,10);
+    return '';
+  }
+
+  onFileImport(e){
+    const file=e.target.files[0];if(!file)return;
+    this.setState({syncState:'loading',syncMsg:'Parsing file…'});
+    const ext=file.name.split('.').pop().toLowerCase();
+    const finish=(parsed)=>{
+      if(!parsed.length){this.setState({syncState:'error',syncMsg:'No projects found in file'});return;}
+      this._applyData(parsed);
+      const t=new Date();
+      this.setState({syncState:'done',syncMsg:'Imported '+parsed.length+' projects · '+t.getHours()+':'+String(t.getMinutes()).padStart(2,'0')});
+    };
+    if(ext==='csv'){
+      const r=new FileReader();
+      r.onload=ev=>{try{finish(this.parseRows(ev.target.result.split('\n').map(l=>l.split(','))));}catch(err){this.setState({syncState:'error',syncMsg:'Parse error: '+err.message});}};
+      r.readAsText(file);
+    }else{
+      const r=new FileReader();
+      r.onload=ev=>{
+        try{
+          if(typeof XLSX==='undefined')throw new Error('Parser not ready');
+          finish(this.parseWorkbook(XLSX.read(ev.target.result,{type:'array',cellDates:true})));
+        }catch(err){this.setState({syncState:'error',syncMsg:'Parse error: '+err.message});}
+      };
+      r.readAsArrayBuffer(file);
+    }
+  }
+
+  triggerImport(){const el=document.getElementById('praeto-file-import');if(el){el.value='';el.click();}}
+
+  d2i(s){return Math.round((new Date(s+'T00:00:00')-new Date(this.RS+'T00:00:00'))/86400000);}
+  fmt(s){if(!s)return '';const m=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];const d=new Date(s+'T00:00:00');return d.getDate()+' '+m[d.getMonth()];}
+  es(t){return this.state.ov[t.uid]||t.s||'todo';}
+  owners(str){if(!str)return [];return str.split('&').map(x=>x.trim()).map(n=>this.ownerMeta[n]||{init:n.slice(0,2),color:'#7A7F85',name:n}).map((m,i,a)=>({...m}));}
+  ownerNames(str){return (str||'').split('&').map(x=>x.trim()).filter(Boolean);}
+
+  setView(v){this.setState({view:v});}
+  setOwner(o){this.setState({owner:o});}
+  setPrio(p){this.setState({prio:p});}
+  onSearch(e){this.setState({q:e.target.value});}
+  open(id){this.setState({sel:id});}
+  close(){this.setState({sel:null});}
+  setSort(k){this.setState(st=>({sort:k,sortDir:st.sort===k?-st.sortDir:1}));}
+  cycle(uid){const order=['todo','active','done','blocked'];this.setState(st=>{const t=this._all().find(x=>x.uid===uid);const cur=st.ov[uid]||(t&&t.s)||'todo';const next=order[(order.indexOf(cur)+1)%order.length];const ov={...st.ov,[uid]:next};try{localStorage.setItem('praeto-status-v2',JSON.stringify(ov))}catch(e){}return {ov};});}
+  onSheetChange(e){this.setState({activeSheet:e.target.value},()=>this.trySync());}
+
+  _all(){const r=[];this.data.forEach(p=>p.tasks.forEach(t=>r.push(t)));return r;}
+
+  matchOwner(t){const o=this.state.owner;if(o==='all')return true;return this.ownerNames(t.o).includes(o);}
+  matchPrio(t){const p=this.state.prio;if(p==='all')return true;return t.p===p;}
+  matchQ(t,p){const q=this.state.q.trim().toLowerCase();if(!q)return true;return (t.n+' '+p.name).toLowerCase().includes(q);}
+
+  filteredProjects(){
+    return this.data.map(p=>{
+      const tasks=p.tasks.filter(t=>this.matchOwner(t)&&this.matchPrio(t)&&this.matchQ(t,p));
+      return {...p,_tasks:tasks};
+    }).filter(p=>p._tasks.length>0);
+  }
+
+  renderVals(){
+    const A=(this.props&&this.props.accent)||'#0E5C4A';
+    const st=this.state;
+    const T=this.d2i(this.TODAY);
+    const tabBase='border:none;cursor:pointer;font-family:inherit;font-size:13px;font-weight:600;padding:7px 15px;border-radius:9px;transition:all .15s;';
+    const viewTabs=[['board','Board'],['timeline','Timeline'],['table','Table']].map(([k,l])=>({
+      label:l,onClick:()=>this.setView(k),
+      style:tabBase+(st.view===k?'background:#fff;color:#16191C;box-shadow:0 1px 3px rgba(20,23,28,.12);':'background:transparent;color:#7A7F85;')
+    }));
+
+    const chip=(active,color)=>'display:flex;align-items:center;gap:6px;border:1px solid '+(active?'#16191C':'#E0DED7')+';background:'+(active?'#16191C':'#fff')+';color:'+(active?'#fff':'#4D5258')+';cursor:pointer;font-family:inherit;font-size:12px;font-weight:600;padding:6px 12px;border-radius:9px;transition:all .12s;';
+    const ownerChips=[{k:'all',l:'Everyone'},{k:'Jared',l:'Jared'},{k:'Josh',l:'Josh'},{k:'Tiyane',l:'Tiyane'}].map(c=>({
+      label:c.l,hasDot:c.k!=='all',color:(this.ownerMeta[c.k]||{}).color||'#999',
+      onClick:()=>this.setOwner(c.k),style:chip(st.owner===c.k)
+    }));
+    const prioChips=[{k:'all',l:'All'},{k:'Urgent',l:'Urgent'},{k:'High',l:'High'},{k:'Medium',l:'Medium'},{k:'Low',l:'Low'}].map(c=>({
+      label:c.l,hasDot:c.k!=='all',color:this.prio[c.k]||'#999',
+      onClick:()=>this.setPrio(c.k),style:chip(st.prio===c.k)
+    }));
+
+    // KPIs (from all data, not filtered)
+    const all=this._all();const nd=all.filter(t=>this.es(t)!=='done');
+    const dueToday=nd.filter(t=>t.t===this.TODAY).length;
+    const dueWeek=nd.filter(t=>t.t&&this.d2i(t.t)>=T&&this.d2i(t.t)<=T+7).length;
+    const overdue=nd.filter(t=>t.t&&this.d2i(t.t)<T).length;
+    const urgent=nd.filter(t=>t.p==='Urgent').length;
+    const doneN=all.filter(t=>this.es(t)==='done').length;
+    const comp=Math.round(doneN/all.length*100);
+    const kpis=[
+      {label:'Live projects',value:this.data.length,suffix:'',note:this.data.filter(p=>p.cat==='A').length+' pipeline · '+this.data.filter(p=>p.cat==='B').length+' deals',dot:A},
+      {label:'Due today',value:dueToday,suffix:'tasks',note:'Across all owners',dot:'#D97706'},
+      {label:'Due this week',value:dueWeek,suffix:'tasks',note:'Next 7 days',dot:'#2563EB'},
+      {label:'Urgent open',value:urgent,suffix:'',note:overdue+' overdue',dot:'#C0392B'},
+      {label:'Completion',value:comp,suffix:'%',note:doneN+' of '+all.length+' tasks done',dot:'#16A34A'},
+    ];
+
+    const fp=this.filteredProjects();
+
+    // BOARD
+    const columns=['A','B','C'].map(cat=>{
+      const cm=this.catMeta[cat];
+      const projects=fp.filter(p=>p.cat===cat).map(p=>{
+        const total=p._tasks.length;const done=p._tasks.filter(t=>this.es(t)==='done').length;
+        const od=p._tasks.filter(t=>this.es(t)!=='done'&&t.t&&this.d2i(t.t)<T).length;
+        const dt=p._tasks.filter(t=>this.es(t)!=='done'&&t.t===this.TODAY).length;
+        const up=p._tasks.filter(t=>this.es(t)!=='done'&&t.t&&this.d2i(t.t)>=T).map(t=>this.d2i(t.t)).sort((a,b)=>a-b)[0];
+        let flag='On track',fc='#16A34A',fb='#E7F4EC';
+        if(od>0){flag=od+' overdue';fc='#C0392B';fb='#FBEAE8';}
+        else if(dt>0){flag='Due today';fc='#B45309';fb='#FBF0E0';}
+        else if(done===total){flag='Complete';fc='#16A34A';fb='#E7F4EC';}
+        else if(up!=null){const ds=up-T;flag=ds<=7?('Due in '+ds+'d'):('Next '+this.fmt(this.RS&&new Date(new Date(this.RS+'T00:00:00').getTime()+up*86400000).toISOString().slice(0,10)));fc='#4D5258';fb='#F1F0EA';}
+        const on=this.ownerNames(p._tasks.map(t=>t.o).join('&')).filter((v,i,a)=>a.indexOf(v)===i);
+        const avatars=on.map(n=>this.ownerMeta[n]||{init:n.slice(0,2),color:'#7A7F85'});
+        return {code:p.id,name:p.name,priority:p.priority,prioColor:this.prio[p.priority],
+          total,done,pct:total?Math.round(done/total*100):0,avatars,flag,flagColor:fc,flagBg:fb,
+          onClick:()=>this.open(p.id)};
+      });
+      return {label:cm.label,sub:cm.sub,count:projects.length,projects};
+    });
+
+    // TIMELINE
+    const total=this.d2i(this.RE)+1;
+    const days=[];const start=new Date(this.RS+'T00:00:00');
+    for(let i=0;i<total;i++){const d=new Date(start.getTime()+i*86400000);const wd=d.getDay();const we=wd===0||wd===6;
+      days.push({n:d.getDate(),color:we?'#C2C0B8':'#8A8F95',bg:we?'#FAF9F6':'transparent',we,month:d.getMonth()});}
+    const monthsRaw={};days.forEach((d,i)=>{(monthsRaw[d.month]=monthsRaw[d.month]||[]).push(i)});
+    const mn=['January','February','March','April','May','June','July','August','September','October','November','December'];
+    const months=Object.keys(monthsRaw).map(k=>({label:mn[k]+' 2026',width:monthsRaw[k].length*this.DW}));
+    const showWk=(this.props&&this.props.showWeekend)!==false;
+    const weekends=showWk?days.map((d,i)=>d.we?{left:i*this.DW}:null).filter(Boolean):[];
+    const grows=[];
+    fp.forEach(p=>{
+      grows.push({isGroup:true,isTask:false,code:p.id,label:p.name,h:38,hasBar:false,rowBg:'#FBFAF7',labelBg:'#FBFAF7',color:A});
+      p._tasks.forEach(t=>{
+        const stt=this.es(t);const c=this.sm[stt].color;
+        const has=!!(t.f&&t.t);
+        let left=0,width=0;
+        if(has){left=this.d2i(t.f)*this.DW+2;width=Math.max((this.d2i(t.t)-this.d2i(t.f)+1)*this.DW-4,20);}
+        grows.push({isGroup:false,isTask:true,label:t.n,color:c,h:34,hasBar:has,
+          left,width,barColor:stt==='todo'?'#CBD5E1':c,barTop:9,barH:16,rowBg:'#fff',labelBg:'#fff'});
+      });
+    });
+    const gantt={fullWidth:262+total*this.DW,trackWidth:total*this.DW,days,months,weekends,
+      todayAbs:T*this.DW,rows:grows};
+
+    // TABLE
+    const sortMeta=[['code','Code','left'],['name','Task',''],['project','Project',''],['owner','Owner',''],['priority','Priority',''],['start','Start',''],['finish','Finish',''],['status','Status','']];
+    const sortKeys={code:'code',name:'name',project:'project',owner:'owner',priority:'priority',start:'start',finish:'finish',status:'status'};
+    const tableCols=sortMeta.map(([k,l])=>({label:l,arrow:st.sort===k?(st.sortDir>0?' ↑':' ↓'):'',
+      onClick:()=>this.setSort(k),
+      style:'cursor:pointer;user-select:none;'+(st.sort===k?'color:#16191C;':'')}));
+    const prioRank={Urgent:0,High:1,Medium:2,Low:3};
+    let trows=[];
+    fp.forEach(p=>p._tasks.forEach((t,i)=>{
+      const stt=this.es(t);const om=(this.ownerNames(t.o).map(n=>this.ownerMeta[n])[0])||{init:'?',color:'#999'};
+      const od=stt!=='done'&&t.t&&this.d2i(t.t)<T;const dtoday=stt!=='done'&&t.t===this.TODAY;
+      trows.push({code:p.id+'.'+(i+1),name:t.n,project:p.name,
+        ownerInit:om.init,ownerColor:om.color,owner:t.o,
+        priority:t.p,prioColor:this.prio[t.p],_prank:prioRank[t.p],
+        start:this.fmt(t.f)||'—',finish:this.fmt(t.t)||'—',_fi:t.t?this.d2i(t.t):99999,_si:t.f?this.d2i(t.f):99999,
+        finishColor:od?'#C0392B':(dtoday?'#B45309':'#7A7F85'),finishWeight:(od||dtoday)?'700':'500',
+        statusLabel:this.sm[stt].label,statusColor:this.sm[stt].color,statusBg:this.sm[stt].bg,_srank:['blocked','active','todo','done'].indexOf(stt),
+        onClick:()=>this.open(p.id)});
+    }));
+    const sk=st.sort;
+    trows.sort((a,b)=>{let av,bv;
+      if(sk==='priority'){av=a._prank;bv=b._prank;}
+      else if(sk==='start'){av=a._si;bv=b._si;}
+      else if(sk==='finish'){av=a._fi;bv=b._fi;}
+      else if(sk==='status'){av=a._srank;bv=b._srank;}
+      else{av=(a[sortKeys[sk]]||'').toString().toLowerCase();bv=(b[sortKeys[sk]]||'').toString().toLowerCase();}
+      if(av<bv)return -1*st.sortDir;if(av>bv)return 1*st.sortDir;return 0;});
+
+    // DRAWER
+    let sel=null;const sp=this.data.find(p=>p.id===st.sel);
+    if(sp){
+      const total2=sp.tasks.length;const done2=sp.tasks.filter(t=>this.es(t)==='done').length;
+      sel={code:sp.id,name:sp.name,catLabel:this.catMeta[sp.cat].label,
+        priority:sp.priority,prioColor:this.prio[sp.priority],
+        total:total2,pct:total2?Math.round(done2/total2*100):0,
+        tasks:sp.tasks.map(t=>{
+          const stt=this.es(t);const sm=this.sm[stt];const om=(this.ownerNames(t.o).map(n=>this.ownerMeta[n])[0])||{init:'?',color:'#999'};
+          const od=stt!=='done'&&t.t&&this.d2i(t.t)<T;const dtoday=stt!=='done'&&t.t===this.TODAY;
+          let dl='';if(t.f&&t.t){dl=t.f===t.t?this.fmt(t.t):this.fmt(t.f)+' → '+this.fmt(t.t);}
+          return {name:t.n,note:t.note||'',hasNote:!!t.note,
+            owner:t.o,ownerInit:om.init,ownerColor:om.color,
+            priority:t.p,prioColor:this.prio[t.p],
+            statusLabel:sm.label,statusColor:sm.color,statusBg:sm.bg,
+            check:stt==='done'?'✓':(stt==='blocked'?'!':(stt==='active'?'•':'')),
+            checkBg:stt==='done'?'#16A34A':(stt==='blocked'?'#C0392B':(stt==='active'?'#2563EB':'transparent')),
+            nameColor:stt==='done'?'#9AA0A6':'#16191C',strike:stt==='done'?'line-through':'none',
+            hasDates:!!dl,dateLabel:dl,dateColor:od?'#C0392B':(dtoday?'#B45309':'#7A7F85'),dateWeight:(od||dtoday)?'700':'500',
+            onToggle:()=>this.cycle(t.uid)};
+        })};
+    }
+
+    const syncColors={idle:'#9AA0A6',loading:'#2563EB',done:'#16A34A',error:'#C0392B'};
+    const syncLabels={idle:'⟳ Sync',loading:'⟳ Syncing…',done:'⟳ Live',error:'⟳ Retry'};
+    const sc=st.syncState||'idle';
+    const syncBtnBase='border:none;cursor:pointer;font-family:inherit;font-size:12px;font-weight:700;padding:7px 11px;border-radius:9px;white-space:nowrap;transition:all .15s;';
+    const syncBtnStyle=syncBtnBase+'background:'+(sc==='done'?'#E7F4EC':(sc==='error'?'#FBEAE8':'#fff'))+';color:'+syncColors[sc]+';border:1px solid '+(sc==='done'?'#B8E6C8':(sc==='error'?'#F5C8C2':'#E0DED7'))+';';
+    return {accent:A,q:st.q,viewTabs,ownerChips,prioChips,kpis,columns,gantt,
+      tableCols,tableRows:trows,
+      isBoard:st.view==='board',isTimeline:st.view==='timeline',isTable:st.view==='table',
+      hasSel:!!sel,sel,
+      closeDrawer:()=>this.close(),
+      onManualImport:()=>this.triggerImport(),
+      onSync:()=>this.trySync(),
+      onSearch:(e)=>this.onSearch(e),
+      onFileImport:(e)=>this.onFileImport(e),
+      onSheetChange:(e)=>this.onSheetChange(e),
+      hasSheets:!!(st.availableSheets&&st.availableSheets.length),
+      activeSheet:st.activeSheet||'',
+      availableSheets:st.availableSheets||[],
+      needsAuth:sc==='error'&&!!st.authUrl,
+      authUrl:st.authUrl||(this.backend+'/api/auth/login'),
+      syncBtn:syncLabels[sc]||'⟳ Sync',
+      syncBtnStyle,
+      syncStatusText:st.syncMsg||'',
+      syncStatusColor:syncColors[sc],
+      hasSyncStatus:!!(st.syncMsg),
+    }
+  }
+}
+</script>
+</body>
+</html>
