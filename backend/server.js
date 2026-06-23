@@ -78,10 +78,21 @@ app.get('/api/data', async (req, res) => {
   }
 
   try {
-    const graphUrl = `https://graph.microsoft.com/v1.0/shares/${encodeShareUrl(shareUrl)}/driveItem/content`;
-    const response = await axios.get(graphUrl, { responseType: 'arraybuffer' });
+    const shareId = encodeShareUrl(shareUrl);
 
-    const workbook = XLSX.read(response.data, { type: 'array', cellDates: true });
+    // Step 1: get driveItem metadata — includes a pre-authenticated download URL
+    const metaResp = await axios.get(
+      `https://graph.microsoft.com/v1.0/shares/${shareId}/driveItem`,
+      { params: { $select: 'id,name,@microsoft.graph.downloadUrl' } }
+    );
+
+    const dlUrl = metaResp.data['@microsoft.graph.downloadUrl'];
+    if (!dlUrl) throw new Error('Microsoft Graph returned no download URL — ensure the file is an Excel workbook.');
+
+    // Step 2: download the file via the pre-authenticated CDN URL (no auth needed)
+    const fileResp = await axios.get(dlUrl, { responseType: 'arraybuffer' });
+
+    const workbook = XLSX.read(fileResp.data, { type: 'array', cellDates: true });
     const sheetName = workbook.SheetNames[0];
     const rows = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1, defval: '' });
     const projects = parseProjectRows(rows);
@@ -89,14 +100,23 @@ app.get('/api/data', async (req, res) => {
     res.json({ projects, sheetName, lastSync: new Date().toISOString() });
   } catch (error) {
     const status = error.response?.status;
+    const graphMsg = error.response?.data?.error?.message || '';
+    console.error(`Graph API error [${status}]:`, graphMsg || error.message);
+
     if (status === 401 || status === 403) {
       return res.status(403).json({
-        error: 'Cannot access this file. Set the OneDrive share link to "Anyone with the link can view".',
-        code: 'NOT_PUBLIC'
+        error: 'Access denied by Microsoft. Make sure the share is set to "Anyone with the link can view" — not just people in your organisation.',
+        code: 'NOT_PUBLIC',
+        detail: graphMsg,
       });
     }
-    console.error('Fetch error:', error.message);
-    res.status(500).json({ error: error.message });
+    if (status === 404) {
+      return res.status(404).json({
+        error: 'Share link not found or has expired. Generate a new share link in OneDrive.',
+        code: 'NOT_FOUND',
+      });
+    }
+    res.status(500).json({ error: graphMsg || error.message, status });
   }
 });
 
