@@ -454,7 +454,7 @@ class Component extends DCLogic {
   }
 
   componentDidMount(){
-    const backend=this.props.backendUrl||'http://localhost:3001';
+    const backend=this.props.backendUrl||'https://pmtool-4-praeto.vercel.app';
     this.backend=backend;
     this.trySync();
     this._si=setInterval(()=>this.trySync(),5*60*1000);
