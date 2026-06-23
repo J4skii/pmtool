@@ -69,8 +69,10 @@ function parseExcelDate(v) {
   return '';
 }
 
-// GET /api/data?shareUrl=<encoded 1drv.ms link>
-// The share link must be set to "Anyone with the link can view" in OneDrive.
+// GET /api/data?shareUrl=<1drv.ms link>
+// The share link must be "Anyone with the link can view".
+// Strategy A: append &download=1 to bypass Graph API entirely (no auth needed).
+// Strategy B (fallback): client credentials token + Graph API (needs Azure env vars).
 app.get('/api/data', async (req, res) => {
   const { shareUrl } = req.query;
   if (!shareUrl) {
@@ -78,21 +80,64 @@ app.get('/api/data', async (req, res) => {
   }
 
   try {
-    const shareId = encodeShareUrl(shareUrl);
+    let fileBuffer;
 
-    // Step 1: get driveItem metadata — includes a pre-authenticated download URL
-    const metaResp = await axios.get(
-      `https://graph.microsoft.com/v1.0/shares/${shareId}/driveItem`,
-      { params: { $select: 'id,name,@microsoft.graph.downloadUrl' } }
-    );
+    // Strategy A — direct download via &download=1 (no auth, works for public shares)
+    const dlUrl = shareUrl.includes('?') ? `${shareUrl}&download=1` : `${shareUrl}?download=1`;
+    try {
+      const resp = await axios.get(dlUrl, {
+        responseType: 'arraybuffer',
+        maxRedirects: 10,
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+          'Accept': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/octet-stream,*/*',
+        },
+      });
+      const ct = resp.headers['content-type'] || '';
+      if (!ct.includes('html')) {
+        fileBuffer = resp.data;
+      }
+    } catch (e) {
+      console.log('Strategy A failed:', e.message);
+    }
 
-    const dlUrl = metaResp.data['@microsoft.graph.downloadUrl'];
-    if (!dlUrl) throw new Error('Microsoft Graph returned no download URL — ensure the file is an Excel workbook.');
+    // Strategy B — Graph API with client credentials token (needs Azure env vars)
+    if (!fileBuffer && process.env.AZURE_CLIENT_ID) {
+      const tokenResp = await axios.post(
+        `https://login.microsoftonline.com/${process.env.AZURE_TENANT_ID || 'common'}/oauth2/v2.0/token`,
+        new URLSearchParams({
+          client_id: process.env.AZURE_CLIENT_ID,
+          client_secret: process.env.AZURE_CLIENT_SECRET,
+          scope: 'https://graph.microsoft.com/.default',
+          grant_type: 'client_credentials',
+        }).toString(),
+        { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
+      );
+      const token = tokenResp.data.access_token;
 
-    // Step 2: download the file via the pre-authenticated CDN URL (no auth needed)
-    const fileResp = await axios.get(dlUrl, { responseType: 'arraybuffer' });
+      const shareId = encodeShareUrl(shareUrl);
+      const metaResp = await axios.get(
+        `https://graph.microsoft.com/v1.0/shares/${shareId}/driveItem`,
+        {
+          params: { $select: '@microsoft.graph.downloadUrl' },
+          headers: { Authorization: `Bearer ${token}` },
+        }
+      );
+      const graphDlUrl = metaResp.data['@microsoft.graph.downloadUrl'];
+      if (graphDlUrl) {
+        const fileResp = await axios.get(graphDlUrl, { responseType: 'arraybuffer' });
+        fileBuffer = fileResp.data;
+      }
+    }
 
-    const workbook = XLSX.read(fileResp.data, { type: 'array', cellDates: true });
+    if (!fileBuffer) {
+      return res.status(403).json({
+        error: 'Could not download the file. Either the share link is not set to "Anyone with the link can view", or Azure credentials are needed. See SETUP.md.',
+        code: 'NO_ACCESS',
+      });
+    }
+
+    const workbook = XLSX.read(fileBuffer, { type: 'array', cellDates: true });
     const sheetName = workbook.SheetNames[0];
     const rows = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1, defval: '' });
     const projects = parseProjectRows(rows);
@@ -100,23 +145,9 @@ app.get('/api/data', async (req, res) => {
     res.json({ projects, sheetName, lastSync: new Date().toISOString() });
   } catch (error) {
     const status = error.response?.status;
-    const graphMsg = error.response?.data?.error?.message || '';
-    console.error(`Graph API error [${status}]:`, graphMsg || error.message);
-
-    if (status === 401 || status === 403) {
-      return res.status(403).json({
-        error: 'Access denied by Microsoft. Make sure the share is set to "Anyone with the link can view" — not just people in your organisation.',
-        code: 'NOT_PUBLIC',
-        detail: graphMsg,
-      });
-    }
-    if (status === 404) {
-      return res.status(404).json({
-        error: 'Share link not found or has expired. Generate a new share link in OneDrive.',
-        code: 'NOT_FOUND',
-      });
-    }
-    res.status(500).json({ error: graphMsg || error.message, status });
+    const detail = error.response?.data?.error?.message || error.message;
+    console.error(`/api/data error [${status}]:`, detail);
+    res.status(status || 500).json({ error: detail, status });
   }
 });
 
