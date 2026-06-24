@@ -11,7 +11,14 @@ const app = express();
 app.use(cors({ origin: process.env.FRONTEND_URL || '*' }));
 app.use(express.json());
 
-// Converts a 1drv.ms share URL into the Graph API anonymous share token
+const TENANT      = process.env.AZURE_TENANT_ID    || '130082fa-9207-414f-adc2-d194b13593a6';
+const CLIENT_ID   = process.env.AZURE_CLIENT_ID;
+const CLIENT_SECRET = process.env.AZURE_CLIENT_SECRET;
+const BACKEND_URL = process.env.BACKEND_URL  || 'https://pmtool-4-praeto.vercel.app';
+const FRONTEND_URL = process.env.FRONTEND_URL || 'https://pmtool-4-praeto.vercel.app';
+const REDIRECT_URI = `${BACKEND_URL}/api/auth/callback`;
+const SCOPES = 'offline_access Files.Read User.Read';
+
 function encodeShareUrl(url) {
   const b64 = Buffer.from(url).toString('base64')
     .replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
@@ -69,85 +76,113 @@ function parseExcelDate(v) {
   return '';
 }
 
-// GET /api/data?shareUrl=<1drv.ms link>
-// The share link must be "Anyone with the link can view".
-// Strategy A: append &download=1 to bypass Graph API entirely (no auth needed).
-// Strategy B (fallback): client credentials token + Graph API (needs Azure env vars).
+// ─── Auth: redirect user to Microsoft login ───────────────────────────────
+app.get('/api/auth/login', (req, res) => {
+  if (!CLIENT_ID) return res.status(503).send('Azure credentials not configured.');
+  const params = new URLSearchParams({
+    client_id: CLIENT_ID,
+    response_type: 'code',
+    redirect_uri: REDIRECT_URI,
+    scope: SCOPES,
+    response_mode: 'query',
+  });
+  res.redirect(`https://login.microsoftonline.com/${TENANT}/oauth2/v2.0/authorize?${params}`);
+});
+
+// ─── Auth: exchange code for tokens, send refresh token to frontend ────────
+app.get('/api/auth/callback', async (req, res) => {
+  const { code, error, error_description } = req.query;
+  if (error) return res.status(400).send(`Microsoft auth error: ${error_description || error}`);
+
+  try {
+    const resp = await axios.post(
+      `https://login.microsoftonline.com/${TENANT}/oauth2/v2.0/token`,
+      new URLSearchParams({
+        client_id: CLIENT_ID,
+        client_secret: CLIENT_SECRET,
+        code,
+        redirect_uri: REDIRECT_URI,
+        grant_type: 'authorization_code',
+        scope: SCOPES,
+      }).toString(),
+      { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
+    );
+
+    const { refresh_token } = resp.data;
+    // Send the refresh token to the frontend via URL fragment — never touches a server log
+    res.redirect(`${FRONTEND_URL}#rt=${encodeURIComponent(refresh_token)}`);
+  } catch (e) {
+    const msg = e.response?.data?.error_description || e.message;
+    res.status(500).send('Token exchange failed: ' + msg);
+  }
+});
+
+// ─── Data: fetch and parse the Excel file ─────────────────────────────────
+// Requires X-Refresh-Token header from the frontend.
 app.get('/api/data', async (req, res) => {
   const { shareUrl } = req.query;
-  if (!shareUrl) {
-    return res.status(400).json({ error: 'shareUrl query param is required' });
+  if (!shareUrl) return res.status(400).json({ error: 'shareUrl query param is required' });
+
+  const refreshToken = req.headers['x-refresh-token'];
+  if (!refreshToken) {
+    return res.status(401).json({
+      error: 'Not connected to OneDrive. Click "Connect OneDrive" in the dashboard.',
+      code: 'NO_AUTH',
+    });
   }
 
   try {
-    let fileBuffer;
+    // Exchange refresh token for a fresh access token
+    const tokenResp = await axios.post(
+      `https://login.microsoftonline.com/${TENANT}/oauth2/v2.0/token`,
+      new URLSearchParams({
+        client_id: CLIENT_ID,
+        client_secret: CLIENT_SECRET,
+        refresh_token: refreshToken,
+        grant_type: 'refresh_token',
+        scope: 'Files.Read',
+      }).toString(),
+      { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
+    );
 
-    // Strategy A — direct download via &download=1 (no auth, works for public shares)
-    const dlUrl = shareUrl.includes('?') ? `${shareUrl}&download=1` : `${shareUrl}?download=1`;
-    try {
-      const resp = await axios.get(dlUrl, {
-        responseType: 'arraybuffer',
-        maxRedirects: 10,
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-          'Accept': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/octet-stream,*/*',
-        },
-      });
-      const ct = resp.headers['content-type'] || '';
-      if (!ct.includes('html')) {
-        fileBuffer = resp.data;
+    const { access_token, refresh_token: newRefreshToken } = tokenResp.data;
+
+    // Get pre-authenticated download URL from Graph
+    const shareId = encodeShareUrl(shareUrl);
+    const metaResp = await axios.get(
+      `https://graph.microsoft.com/v1.0/shares/${shareId}/driveItem`,
+      {
+        params: { $select: '@microsoft.graph.downloadUrl' },
+        headers: { Authorization: `Bearer ${access_token}` },
       }
-    } catch (e) {
-      console.log('Strategy A failed:', e.message);
-    }
+    );
 
-    // Strategy B — Graph API with client credentials token (needs Azure env vars)
-    if (!fileBuffer && process.env.AZURE_CLIENT_ID) {
-      const tokenResp = await axios.post(
-        `https://login.microsoftonline.com/${process.env.AZURE_TENANT_ID || 'common'}/oauth2/v2.0/token`,
-        new URLSearchParams({
-          client_id: process.env.AZURE_CLIENT_ID,
-          client_secret: process.env.AZURE_CLIENT_SECRET,
-          scope: 'https://graph.microsoft.com/.default',
-          grant_type: 'client_credentials',
-        }).toString(),
-        { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
-      );
-      const token = tokenResp.data.access_token;
+    const dlUrl = metaResp.data['@microsoft.graph.downloadUrl'];
+    if (!dlUrl) throw new Error('No download URL returned — ensure the file is an Excel workbook.');
 
-      const shareId = encodeShareUrl(shareUrl);
-      const metaResp = await axios.get(
-        `https://graph.microsoft.com/v1.0/shares/${shareId}/driveItem`,
-        {
-          params: { $select: '@microsoft.graph.downloadUrl' },
-          headers: { Authorization: `Bearer ${token}` },
-        }
-      );
-      const graphDlUrl = metaResp.data['@microsoft.graph.downloadUrl'];
-      if (graphDlUrl) {
-        const fileResp = await axios.get(graphDlUrl, { responseType: 'arraybuffer' });
-        fileBuffer = fileResp.data;
-      }
-    }
+    const fileResp = await axios.get(dlUrl, { responseType: 'arraybuffer' });
 
-    if (!fileBuffer) {
-      return res.status(403).json({
-        error: 'Could not download the file. Either the share link is not set to "Anyone with the link can view", or Azure credentials are needed. See SETUP.md.',
-        code: 'NO_ACCESS',
-      });
-    }
-
-    const workbook = XLSX.read(fileBuffer, { type: 'array', cellDates: true });
+    const workbook = XLSX.read(fileResp.data, { type: 'array', cellDates: true });
     const sheetName = workbook.SheetNames[0];
     const rows = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1, defval: '' });
     const projects = parseProjectRows(rows);
 
-    res.json({ projects, sheetName, lastSync: new Date().toISOString() });
+    res.json({
+      projects,
+      sheetName,
+      lastSync: new Date().toISOString(),
+      // Return rotated refresh token so frontend keeps it fresh
+      newRefreshToken: newRefreshToken || null,
+    });
   } catch (error) {
     const status = error.response?.status;
-    const detail = error.response?.data?.error?.message || error.message;
+    const detail = error.response?.data?.error_description || error.response?.data?.error?.message || error.message;
     console.error(`/api/data error [${status}]:`, detail);
-    res.status(status || 500).json({ error: detail, status });
+
+    if (status === 401 || (error.response?.data?.error === 'invalid_grant')) {
+      return res.status(401).json({ error: 'Session expired. Reconnect OneDrive.', code: 'TOKEN_EXPIRED' });
+    }
+    res.status(status || 500).json({ error: detail || error.message });
   }
 });
 
@@ -155,12 +190,11 @@ app.get('/health', (_req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-// Listen locally; Vercel uses the default export below
 if (process.env.NODE_ENV !== 'production') {
   const PORT = process.env.PORT || 3001;
   app.listen(PORT, () => {
     console.log(`Praeto backend running on :${PORT}`);
-    console.log(`Data endpoint: GET http://localhost:${PORT}/api/data?shareUrl=<1drv.ms link>`);
+    console.log(`Login: http://localhost:${PORT}/api/auth/login`);
   });
 }
 

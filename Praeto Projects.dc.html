@@ -60,6 +60,9 @@
           </select>
         </sc-if>
         <button onClick="{{ onOpenSheetMgr }}" style="border:1px solid #E0DED7;background:#fff;color:#7A7F85;cursor:pointer;font-family:inherit;font-size:12px;font-weight:600;padding:7px 11px;border-radius:9px;white-space:nowrap">⚙ Sheets</button>
+        <sc-if value="{{ needsAuth }}" hint-placeholder-val="{{ false }}">
+          <a href="{{ authUrl }}" style="text-decoration:none"><button style="border:none;background:#0E5C4A;color:#fff;cursor:pointer;font-family:inherit;font-size:12px;font-weight:700;padding:7px 14px;border-radius:9px;white-space:nowrap">Connect OneDrive</button></a>
+        </sc-if>
         <button onClick="{{ onSync }}" style="{{ syncBtnStyle }}" title="{{ syncStatusText }}">{{ syncBtn }}</button>
         <button onClick="{{ onManualImport }}" title="Import a CSV or XLSX export from OneDrive" style="border:1px solid #E0DED7;background:#fff;color:#7A7F85;cursor:pointer;font-family:inherit;font-size:12px;font-weight:600;padding:7px 11px;border-radius:9px;white-space:nowrap">↑ Import</button>
         <sc-if value="{{ hasSyncStatus }}" hint-placeholder-val="{{ false }}">
@@ -450,12 +453,24 @@ class Component extends DCLogic {
     try{ov=JSON.parse(localStorage.getItem('praeto-status-v2')||'{}')}catch(e){}
     const dv=(props&&props.defaultView)||'board';
     let sheets=[];try{sheets=JSON.parse(localStorage.getItem('praeto-sheets-v1')||'[]');}catch(e){}
-    this.state={view:dv,owner:'all',prio:'all',q:'',sel:null,ov,sort:'finish',sortDir:1,syncState:'idle',syncMsg:'',sheets,activeSheetName:sheets[0]?.name||'',showSheetMgr:false,newSheetName:'',newSheetUrl:''};
+    let rt='';try{rt=localStorage.getItem('praeto-rt-v1')||'';}catch(e){}
+    this.state={view:dv,owner:'all',prio:'all',q:'',sel:null,ov,sort:'finish',sortDir:1,syncState:'idle',syncMsg:'',sheets,activeSheetName:sheets[0]?.name||'',showSheetMgr:false,newSheetName:'',newSheetUrl:'',rt,needsAuth:!rt};
   }
 
   componentDidMount(){
     const backend=this.props.backendUrl||'https://pmtool-4-praeto.vercel.app';
     this.backend=backend;
+    // Check for refresh token in URL fragment after OAuth callback
+    const hash=window.location.hash||'';
+    if(hash.includes('rt=')){
+      const rt=decodeURIComponent((hash.split('rt=')[1]||'').split('&')[0]);
+      if(rt){
+        try{localStorage.setItem('praeto-rt-v1',rt);}catch(e){}
+        window.history.replaceState(null,'',window.location.pathname+window.location.search);
+        this.setState({rt,needsAuth:false},()=>this.trySync());
+        return;
+      }
+    }
     this.trySync();
     this._si=setInterval(()=>this.trySync(),5*60*1000);
   }
@@ -464,18 +479,29 @@ class Component extends DCLogic {
   async trySync(){
     const sheet=this.state.sheets.find(s=>s.name===this.state.activeSheetName);
     if(!sheet){this.setState({syncState:'idle',syncMsg:''});return;}
+    const rt=this.state.rt;
+    if(!rt){this.setState({syncState:'idle',syncMsg:'',needsAuth:true});return;}
     this.setState({syncState:'loading',syncMsg:'Pulling from Excel…'});
     try{
-      const res=await fetch(this.backend+'/api/data?shareUrl='+encodeURIComponent(sheet.url));
+      const res=await fetch(this.backend+'/api/data?shareUrl='+encodeURIComponent(sheet.url),{
+        headers:{'X-Refresh-Token':rt}
+      });
+      const d=await res.json().catch(()=>({}));
       if(!res.ok){
-        const d=await res.json().catch(()=>({}));
-        if(d.code==='NOT_PUBLIC')throw new Error('Share link not public — set to "Anyone with the link" in OneDrive');
+        if(d.code==='NO_AUTH'||d.code==='TOKEN_EXPIRED'){
+          try{localStorage.removeItem('praeto-rt-v1');}catch(e){}
+          this.setState({rt:'',needsAuth:true,syncState:'error',syncMsg:'Session expired — reconnect OneDrive'});
+          return;
+        }
         throw new Error(d.error||'HTTP '+res.status);
       }
-      const d=await res.json();
+      if(d.newRefreshToken){
+        try{localStorage.setItem('praeto-rt-v1',d.newRefreshToken);}catch(e){}
+        this.setState({rt:d.newRefreshToken});
+      }
       this._applyData(d.projects);
       const n=new Date();
-      this.setState({syncState:'done',syncMsg:'Live · '+n.getHours()+':'+String(n.getMinutes()).padStart(2,'0')});
+      this.setState({syncState:'done',syncMsg:'Live · '+n.getHours()+':'+String(n.getMinutes()).padStart(2,'0'),needsAuth:false});
     }catch(e){
       this.setState({syncState:'error',syncMsg:String(e.message||e).slice(0,60)});
     }
@@ -772,6 +798,8 @@ class Component extends DCLogic {
       onSheetChange:(e)=>this.onSheetChange(e),
       sheets,hasSheets:sheets.length>0,
       activeSheetName:st.activeSheetName||'',
+      needsAuth:!!st.needsAuth,
+      authUrl:this.backend+'/api/auth/login',
       syncBtn:syncLabels[sc]||'⟳ Sync',
       syncBtnStyle,
       syncStatusText:st.syncMsg||'',
