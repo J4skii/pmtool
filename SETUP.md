@@ -72,6 +72,12 @@ You'll share every Google Sheet with this email (Step 6).
 3. Enter a name (e.g. `Pipeline`) and paste the sheet's URL
 4. Click **Add sheet** — it syncs automatically
 
+### Any sheet layout works — columns are auto-detected
+
+The dashboard doesn't expect a fixed spreadsheet format. On first sync it scans the sheet's header row and guesses which column is Project name, Status, Owner, Priority, Start date, Finish date, and % complete, based on the header text (e.g. a column titled "Assignee" is guessed as Owner).
+
+If the guess is wrong — or you want to remap a column — click **✎ Columns** next to that sheet in the Sheets panel and adjust each field's dropdown, then **Save columns**. The Board view groups projects by whatever the Status column contains; the Timeline view only draws bars if both Start and Finish are mapped.
+
 Sheet links are stored in your browser's `localStorage`. Anyone using the dashboard needs to add their own sheet links, but doesn't need any login of their own — the backend's service account handles all reads.
 
 ---

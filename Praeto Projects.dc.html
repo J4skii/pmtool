@@ -158,6 +158,11 @@
       </div>
     </sc-if>
 
+    <!-- TIMELINE EMPTY STATE -->
+    <sc-if value="{{ isTimelineEmpty }}" hint-placeholder-val="{{ false }}">
+      <div style="background:#fff;border:1px solid #EAE8E1;border-radius:16px;padding:60px 24px;text-align:center;color:#8A8F95;font-size:13px;font-weight:600">This sheet has no Start/Finish date columns mapped — Timeline needs both to draw bars. Open ⚙ Sheets → ✎ Columns to map them.</div>
+    </sc-if>
+
     <!-- TIMELINE -->
     <sc-if value="{{ isTimeline }}" hint-placeholder-val="{{ true }}">
       <div style="background:#fff;border:1px solid #EAE8E1;border-radius:16px;overflow:hidden;box-shadow:0 1px 2px rgba(20,23,28,.03)">
@@ -319,11 +324,29 @@
                 <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:7px">
                   <div style="font-size:14px;font-weight:700">{{ s.name }}</div>
                   <div style="display:flex;gap:7px">
+                    <sc-if value="{{ s.hasMappingBtn }}" hint-placeholder-val="{{ true }}">
+                      <button onClick="{{ s.onToggleMapping }}" style="border:1px solid #E0DED7;background:#fff;color:#4D5258;cursor:pointer;font-family:inherit;font-size:11px;font-weight:600;padding:4px 10px;border-radius:7px">{{ s.mappingBtnLabel }}</button>
+                    </sc-if>
                     <button onClick="{{ s.onSetActive }}" style="{{ s.activeStyle }}">{{ s.activeLabel }}</button>
                     <button onClick="{{ s.onRemove }}" style="border:1px solid #F5C8C2;background:#FBEAE8;color:#C0392B;cursor:pointer;font-family:inherit;font-size:11px;font-weight:600;padding:4px 10px;border-radius:7px">Remove</button>
                   </div>
                 </div>
-                <div style="font-size:11px;font-family:'Geist Mono',monospace;color:#9AA0A6;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ s.url }}</div>
+                <div style="font-size:11px;font-family:'Geist Mono',monospace;color:#9AA0A6;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-bottom:8px">{{ s.url }}</div>
+                <sc-if value="{{ s.isEditingMapping }}" hint-placeholder-val="{{ false }}">
+                  <div style="border-top:1px solid #EAE8E1;padding-top:10px;display:flex;flex-direction:column;gap:8px">
+                    <sc-for list="{{ s.mapFields }}" as="mf" hint-placeholder-count="7">
+                      <div style="display:flex;align-items:center;gap:8px">
+                        <div style="width:110px;flex:none;font-size:11.5px;font-weight:600;color:#4D5258">{{ mf.label }}</div>
+                        <select onChange="{{ mf.onChange }}" value="{{ mf.value }}" style="flex:1;border:1px solid #E0DED7;background:#fff;border-radius:7px;padding:5px 8px;font-family:inherit;font-size:12px;color:#16191C;outline:none">
+                          <sc-for list="{{ mf.options }}" as="o" hint-placeholder-count="3">
+                            <option value="{{ o.value }}">{{ o.label }}</option>
+                          </sc-for>
+                        </select>
+                      </div>
+                    </sc-for>
+                    <button onClick="{{ s.onSaveMapping }}" style="border:none;background:#0E5C4A;color:#fff;cursor:pointer;font-family:inherit;font-size:12px;font-weight:700;padding:7px 14px;border-radius:8px;margin-top:2px">Save columns</button>
+                  </div>
+                </sc-if>
               </div>
             </sc-for>
           </div>
@@ -446,12 +469,12 @@ class Component extends DCLogic {
         {n:'Understanding the why',o:'Josh',p:'Urgent',s:'active'},
       ]},
     ];
-    this.data.forEach(p=>p.tasks.forEach((t,i)=>{t.uid=p.id+'#'+i; t.o=t.o||p.owner; t.p=t.p||p.priority;}));
+    this.data.forEach(p=>{p.group=(this.catMeta[p.cat]||{}).label||'Other';p.tasks.forEach((t,i)=>{t.uid=p.id+'#'+i; t.o=t.o||p.owner; t.p=t.p||p.priority;});});
     let ov={};
     try{ov=JSON.parse(localStorage.getItem('praeto-status-v2')||'{}')}catch(e){}
     const dv=(props&&props.defaultView)||'board';
     let sheets=[];try{sheets=JSON.parse(localStorage.getItem('praeto-sheets-v1')||'[]');}catch(e){}
-    this.state={view:dv,owner:'all',prio:'all',q:'',sel:null,ov,sort:'finish',sortDir:1,syncState:'idle',syncMsg:'',sheets,activeSheetName:sheets[0]?.name||'',showSheetMgr:false,newSheetName:'',newSheetUrl:'',svcEmail:''};
+    this.state={view:dv,owner:'all',prio:'all',q:'',sel:null,ov,sort:'finish',sortDir:1,syncState:'idle',syncMsg:'',sheets,activeSheetName:sheets[0]?.name||'',showSheetMgr:false,newSheetName:'',newSheetUrl:'',svcEmail:'',editingMappingFor:null,mapEdit:null};
   }
 
   componentDidMount(){
@@ -466,14 +489,26 @@ class Component extends DCLogic {
   componentWillUnmount(){if(this._si)clearInterval(this._si);}
 
   async trySync(){
-    const sheet=this.state.sheets.find(s=>s.name===this.state.activeSheetName);
+    const idx=this.state.sheets.findIndex(s=>s.name===this.state.activeSheetName);
+    const sheet=this.state.sheets[idx];
     if(!sheet){this.setState({syncState:'idle',syncMsg:''});return;}
     this.setState({syncState:'loading',syncMsg:'Pulling from Google Sheets…'});
     try{
       const res=await fetch(this.backend+'/api/data?sheetId='+encodeURIComponent(sheet.url));
       const d=await res.json().catch(()=>({}));
       if(!res.ok)throw new Error(d.error||'HTTP '+res.status);
-      this._applyData(d.projects);
+      const result=this.parseGenericRows(d.rows||[],sheet.mapping);
+      if(!sheet.mapping||!sheet.headers){
+        const next=[...this.state.sheets];
+        next[idx]={...sheet,mapping:result.mapping,headerRowIndex:result.headerRowIndex,headers:result.headers};
+        this._saveSheets(next);
+      }
+      if(!result.projects.length){
+        this._applyData([]);
+        this.setState({syncState:'error',syncMsg:'Connected, but 0 rows matched — check column mapping'});
+        return;
+      }
+      this._applyData(result.projects);
       const n=new Date();
       this.setState({syncState:'done',syncMsg:'Live · '+n.getHours()+':'+String(n.getMinutes()).padStart(2,'0')});
     }catch(e){
@@ -495,27 +530,89 @@ class Component extends DCLogic {
   parseWorkbook(wb){
     const ws=wb.Sheets[wb.SheetNames[0]];
     const rows=XLSX.utils.sheet_to_json(ws,{header:1,defval:''});
-    return this.parseRows(rows);
+    return this.parseGenericRows(rows,null).projects;
   }
 
-  parseRows(rows){
-    const dr=rows.slice(3);
-    const projects=[];let cur=null;
-    const pRe=/^[A-Za-z]\d+$/,tRe=/^\d+\.\d+$/;
-    dr.forEach(row=>{
-      const code=String(row[0]||'').trim(),name=String(row[1]||'').trim();
-      if(!code&&!name)return;
-      const owner=String(row[2]||'').trim(),prio=this.normPrio(String(row[3]||'').trim());
-      const start=this.xlDate(row[4]),finish=this.xlDate(row[5]);
-      const cat=code[0]&&/[A-Za-z]/.test(code[0])?code[0].toUpperCase():'';
-      if(pRe.test(code)&&name&&cat){
-        cur={id:code,cat,name,owner,priority:prio||'Medium',tasks:[]};
-        projects.push(cur);
-      }else if(tRe.test(code)&&name&&cur){
-        cur.tasks.push({n:name,o:owner,p:prio||cur.priority,s:'todo',f:start,t:finish,note:''});
+  // Works for ANY sheet layout: scores each of the first 15 rows by how many
+  // cells contain a known header keyword, picks the best as the header row,
+  // then maps each semantic field (name/status/owner/...) to the first
+  // matching column. Callers may pass a saved mapping to override the guess.
+  KEYWORDS(){
+    return {
+      name:['project','task','name','title','item'],
+      status:['status','phase','stage'],
+      owner:['owner','assignee','who','responsible'],
+      priority:['priority','urgency'],
+      start:['start','begin'],
+      finish:['finish','end','due','deadline'],
+      percent:['%','percent','progress','complete'],
+    };
+  }
+
+  detectMapping(rows){
+    const KEYWORDS=this.KEYWORDS();
+    const scan=rows.slice(0,15);
+    let bestIdx=0,bestScore=-1;
+    scan.forEach((row,i)=>{
+      let score=0;
+      (row||[]).forEach(cell=>{
+        const s=String(cell||'').toLowerCase();
+        if(!s)return;
+        Object.values(KEYWORDS).forEach(list=>{if(list.some(k=>s.includes(k)))score++;});
+      });
+      if(score>bestScore){bestScore=score;bestIdx=i;}
+    });
+    const headerRow=rows[bestIdx]||[];
+    const mapping={name:-1,status:-1,owner:-1,priority:-1,start:-1,finish:-1,percent:-1};
+    headerRow.forEach((cell,ci)=>{
+      const s=String(cell||'').toLowerCase();
+      if(!s)return;
+      for(const field of Object.keys(KEYWORDS)){
+        if(mapping[field]===-1&&KEYWORDS[field].some(k=>s.includes(k))){mapping[field]=ci;break;}
       }
     });
-    return projects.filter(p=>p.tasks.length);
+    if(mapping.name===-1)mapping.name=0;
+    return {headerRowIndex:bestIdx,headers:headerRow,mapping};
+  }
+
+  statusToState(raw){
+    const s=(raw||'').toLowerCase();
+    if(/done|complete|closed|shipped|resolved/.test(s))return 'done';
+    if(/block|stuck|risk|hold|delay/.test(s))return 'blocked';
+    if(/progress|active|doing|development|build|testing|uat|review|discovery/.test(s))return 'active';
+    return 'todo';
+  }
+
+  percentFrom(v){
+    if(v==null||v==='')return null;
+    const num=typeof v==='number'?v:parseFloat(String(v).replace('%',''));
+    if(isNaN(num))return null;
+    return Math.max(0,Math.min(100,Math.round(num<=1?num*100:num)));
+  }
+
+  parseGenericRows(rows,savedMapping){
+    const detected=this.detectMapping(rows);
+    const headerRowIndex=(savedMapping&&savedMapping.headerRowIndex!=null)?savedMapping.headerRowIndex:detected.headerRowIndex;
+    const headers=rows[headerRowIndex]||detected.headers;
+    const merged=savedMapping?{...detected.mapping,...savedMapping}:detected.mapping;
+    const mapping={name:merged.name,status:merged.status,owner:merged.owner,priority:merged.priority,start:merged.start,finish:merged.finish,percent:merged.percent};
+    const dataRows=rows.slice(headerRowIndex+1);
+    const projects=[];
+    dataRows.forEach((row,i)=>{
+      const cell=idx=>(idx>=0&&idx<row.length)?row[idx]:'';
+      const name=mapping.name>=0?String(cell(mapping.name)||'').trim():'';
+      if(!name)return;
+      const rawStatus=mapping.status>=0?String(cell(mapping.status)||'').trim():'';
+      const owner=mapping.owner>=0?String(cell(mapping.owner)||'').trim():'';
+      const priority=mapping.priority>=0?this.normPrio(String(cell(mapping.priority)||'').trim()):'';
+      const start=mapping.start>=0?this.xlDate(cell(mapping.start)):'';
+      const finish=mapping.finish>=0?this.xlDate(cell(mapping.finish)):'';
+      const percent=mapping.percent>=0?this.percentFrom(cell(mapping.percent)):null;
+      const id='R'+(i+1);
+      const task={n:name,o:owner,p:priority||'Medium',s:this.statusToState(rawStatus),f:start,t:finish,note:'',percent};
+      projects.push({id,group:rawStatus||'Ungrouped',rawStatus,name,owner,priority:priority||'Medium',percent,tasks:[task]});
+    });
+    return {headerRowIndex,headers,mapping,projects};
   }
 
   normPrio(p){const m={urgent:'Urgent',high:'High',medium:'Medium',low:'Low'};return m[(p||'').toLowerCase().trim()]||p||'';}
@@ -546,7 +643,7 @@ class Component extends DCLogic {
     };
     if(ext==='csv'){
       const r=new FileReader();
-      r.onload=ev=>{try{finish(this.parseRows(ev.target.result.split('\n').map(l=>l.split(','))));}catch(err){this.setState({syncState:'error',syncMsg:'Parse error: '+err.message});}};
+      r.onload=ev=>{try{finish(this.parseGenericRows(ev.target.result.split('\n').map(l=>l.split(',')),null).projects);}catch(err){this.setState({syncState:'error',syncMsg:'Parse error: '+err.message});}};
       r.readAsText(file);
     }else{
       const r=new FileReader();
@@ -593,7 +690,23 @@ class Component extends DCLogic {
     this.setState({activeSheetName:next[0]?.name||''},()=>this.trySync());
   }
   openSheetMgr(){this.setState({showSheetMgr:true});}
-  closeSheetMgr(){this.setState({showSheetMgr:false});}
+  closeSheetMgr(){this.setState({showSheetMgr:false,editingMappingFor:null,mapEdit:null});}
+
+  openMappingEditor(name){
+    const sheet=this.state.sheets.find(s=>s.name===name);
+    const mapping=(sheet&&sheet.mapping)||{name:0,status:-1,owner:-1,priority:-1,start:-1,finish:-1,percent:-1};
+    this.setState({editingMappingFor:name,mapEdit:{...mapping}});
+  }
+  closeMappingEditor(){this.setState({editingMappingFor:null,mapEdit:null});}
+  setMapField(field,val){this.setState(st=>({mapEdit:{...st.mapEdit,[field]:parseInt(val,10)}}));}
+  saveMapping(name){
+    const mapping=this.state.mapEdit;
+    const next=this.state.sheets.map(s=>s.name===name?{...s,mapping}:s);
+    this._saveSheets(next);
+    this.setState({editingMappingFor:null,mapEdit:null},()=>{
+      if(this.state.activeSheetName===name)this.trySync();
+    });
+  }
 
   _all(){const r=[];this.data.forEach(p=>p.tasks.forEach(t=>r.push(t)));return r;}
 
@@ -635,9 +748,10 @@ class Component extends DCLogic {
     const overdue=nd.filter(t=>t.t&&this.d2i(t.t)<T).length;
     const urgent=nd.filter(t=>t.p==='Urgent').length;
     const doneN=all.filter(t=>this.es(t)==='done').length;
-    const comp=Math.round(doneN/all.length*100);
+    const comp=all.length?Math.round(doneN/all.length*100):0;
+    const groupsAll=[...new Set(this.data.map(p=>p.group||'Other'))];
     const kpis=[
-      {label:'Live projects',value:this.data.length,suffix:'',note:this.data.filter(p=>p.cat==='A').length+' pipeline · '+this.data.filter(p=>p.cat==='B').length+' deals',dot:A},
+      {label:'Live projects',value:this.data.length,suffix:'',note:groupsAll.length+' status group'+(groupsAll.length===1?'':'s'),dot:A},
       {label:'Due today',value:dueToday,suffix:'tasks',note:'Across all owners',dot:'#D97706'},
       {label:'Due this week',value:dueWeek,suffix:'tasks',note:'Next 7 days',dot:'#2563EB'},
       {label:'Urgent open',value:urgent,suffix:'',note:overdue+' overdue',dot:'#C0392B'},
@@ -646,10 +760,11 @@ class Component extends DCLogic {
 
     const fp=this.filteredProjects();
 
-    // BOARD
-    const columns=['A','B','C'].map(cat=>{
-      const cm=this.catMeta[cat];
-      const projects=fp.filter(p=>p.cat===cat).map(p=>{
+    // BOARD — dynamic groups (by status text for real sheets, by category for demo data)
+    const groupOrder=[];
+    fp.forEach(p=>{const g=p.group||'Other';if(!groupOrder.includes(g))groupOrder.push(g);});
+    const columns=groupOrder.map(g=>{
+      const projects=fp.filter(p=>(p.group||'Other')===g).map(p=>{
         const total=p._tasks.length;const done=p._tasks.filter(t=>this.es(t)==='done').length;
         const od=p._tasks.filter(t=>this.es(t)!=='done'&&t.t&&this.d2i(t.t)<T).length;
         const dt=p._tasks.filter(t=>this.es(t)!=='done'&&t.t===this.TODAY).length;
@@ -665,7 +780,7 @@ class Component extends DCLogic {
           total,done,pct:total?Math.round(done/total*100):0,avatars,flag,flagColor:fc,flagBg:fb,
           onClick:()=>this.open(p.id)};
       });
-      return {label:cm.label,sub:cm.sub,count:projects.length,projects};
+      return {label:g,sub:'',count:projects.length,projects};
     });
 
     // TIMELINE
@@ -692,6 +807,7 @@ class Component extends DCLogic {
     });
     const gantt={fullWidth:262+total*this.DW,trackWidth:total*this.DW,days,months,weekends,
       todayAbs:T*this.DW,rows:grows};
+    const hasTimelineDates=fp.some(p=>p._tasks.some(t=>t.f&&t.t));
 
     // TABLE
     const sortMeta=[['code','Code','left'],['name','Task',''],['project','Project',''],['owner','Owner',''],['priority','Priority',''],['start','Start',''],['finish','Finish',''],['status','Status','']];
@@ -725,7 +841,7 @@ class Component extends DCLogic {
     let sel=null;const sp=this.data.find(p=>p.id===st.sel);
     if(sp){
       const total2=sp.tasks.length;const done2=sp.tasks.filter(t=>this.es(t)==='done').length;
-      sel={code:sp.id,name:sp.name,catLabel:this.catMeta[sp.cat].label,
+      sel={code:sp.id,name:sp.name,catLabel:sp.group||(this.catMeta[sp.cat]||{}).label||'',
         priority:sp.priority,prioColor:this.prio[sp.priority],
         total:total2,pct:total2?Math.round(done2/total2*100):0,
         tasks:sp.tasks.map(t=>{
@@ -751,18 +867,35 @@ class Component extends DCLogic {
     const syncBtnStyle=syncBtnBase+'background:'+(sc==='done'?'#E7F4EC':(sc==='error'?'#FBEAE8':'#fff'))+';color:'+syncColors[sc]+';border:1px solid '+(sc==='done'?'#B8E6C8':(sc==='error'?'#F5C8C2':'#E0DED7'))+';';
     const sheets=st.sheets||[];
     const btnBase='border:1px solid #E0DED7;background:#fff;color:#4D5258;cursor:pointer;font-family:inherit;font-size:11px;font-weight:600;padding:4px 10px;border-radius:7px;';
-    const sheetRows=sheets.map(s=>({
-      name:s.name,url:s.url,
-      activeLabel:s.name===st.activeSheetName?'Active':'Set active',
-      activeStyle:btnBase+(s.name===st.activeSheetName?'background:#E6F0ED;color:#0E5C4A;border-color:#C2DDD7;':''),
-      onSetActive:()=>{this.setState({activeSheetName:s.name},()=>this.trySync());},
-      onRemove:()=>this.removeSheet(s.name),
-    }));
+    const MAP_FIELDS=[['name','Project name*'],['status','Status'],['owner','Owner'],['priority','Priority'],['start','Start date'],['finish','Finish date'],['percent','% complete']];
+    const sheetRows=sheets.map(s=>{
+      const headers=s.headers||[];
+      const isEditing=st.editingMappingFor===s.name;
+      const mapFields=isEditing?MAP_FIELDS.map(([f,l])=>({
+        field:f,label:l,
+        value:String((st.mapEdit&&st.mapEdit[f]!=null)?st.mapEdit[f]:-1),
+        onChange:(e)=>this.setMapField(f,e.target.value),
+        options:[{value:'-1',label:'— none —'}].concat(headers.map((h,i)=>({value:String(i),label:String(h||'Column '+(i+1))}))),
+      })):[];
+      return {
+        name:s.name,url:s.url,
+        activeLabel:s.name===st.activeSheetName?'Active':'Set active',
+        activeStyle:btnBase+(s.name===st.activeSheetName?'background:#E6F0ED;color:#0E5C4A;border-color:#C2DDD7;':''),
+        onSetActive:()=>{this.setState({activeSheetName:s.name},()=>this.trySync());},
+        onRemove:()=>this.removeSheet(s.name),
+        hasMappingBtn:headers.length>0,
+        mappingBtnLabel:isEditing?'Close':'✎ Columns',
+        onToggleMapping:()=>isEditing?this.closeMappingEditor():this.openMappingEditor(s.name),
+        isEditingMapping:isEditing,
+        mapFields,
+        onSaveMapping:()=>this.saveMapping(s.name),
+      };
+    });
     const canAdd=!!(st.newSheetName&&st.newSheetUrl);
     const addBtnStyle='border:none;cursor:'+(canAdd?'pointer':'not-allowed')+';font-family:inherit;font-size:13px;font-weight:700;padding:9px 18px;border-radius:9px;width:100%;transition:all .15s;background:'+(canAdd?'#0E5C4A':'#EAE8E1')+';color:'+(canAdd?'#fff':'#9AA0A6')+';';
     return {accent:A,q:st.q,viewTabs,ownerChips,prioChips,kpis,columns,gantt,
       tableCols,tableRows:trows,
-      isBoard:st.view==='board',isTimeline:st.view==='timeline',isTable:st.view==='table',
+      isBoard:st.view==='board',isTimeline:st.view==='timeline'&&hasTimelineDates,isTimelineEmpty:st.view==='timeline'&&!hasTimelineDates,isTable:st.view==='table',
       hasSel:!!sel,sel,
       closeDrawer:()=>this.close(),
       onManualImport:()=>this.triggerImport(),

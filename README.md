@@ -14,6 +14,7 @@ See [SETUP.md](./SETUP.md) for how to create the service account and find its em
 
 ## Features
 
+- **Works with any sheet layout** — auto-detects the header row and maps columns (Project, Status, Owner, Priority, dates, % complete) by keyword matching; editable per sheet via **✎ Columns**
 - **Live Google Sheets sync** — pulls every 5 minutes via the Sheets API
 - **Multi-sheet management** — add, switch, and remove sheets from the dashboard UI
 - **Three views** — Board (Kanban), Timeline (Gantt), Table (sortable)
