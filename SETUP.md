@@ -1,19 +1,78 @@
-# Praeto Excel Sync — Setup Guide
+# Praeto Sheets Sync — Setup Guide
 
 ---
 
-## ⚠ Before you begin: make your Excel file public
+## How it works
 
-**This is the most important step.** The sync only works if your OneDrive file is shared as "Anyone with the link can view". No sign-in, no Azure, no OAuth — but the file must be publicly readable.
+The dashboard reads live data from Google Sheets using a Google Cloud **service account** — a robot account that has no login of its own. You share each sheet with that account (like sharing with a colleague), and the backend reads it with a private key. No user OAuth, no admin consent, no per-user login.
 
-**In OneDrive:**
-1. Right-click your Excel file → **Share**
-2. Click the link settings (usually says "People in Praeto can view")
-3. Change to **"Anyone with the link"**
-4. Set to **"Can view"** (not edit)
-5. Click **Apply** → **Copy link**
+```
+Dashboard → /api/data?sheetId=... → Backend (service account key) → Google Sheets API → JSON
+```
 
-That link (starting with `https://1drv.ms/...`) is what you paste into the dashboard.
+---
+
+## One-time Google Cloud setup (~5 minutes)
+
+You only do this once.
+
+### Step 1 — Create a Google Cloud project
+
+1. Go to [console.cloud.google.com](https://console.cloud.google.com)
+2. Top-left project dropdown → **New Project** → name it `Praeto Sync` → **Create**
+3. Make sure the new project is selected in the dropdown
+
+### Step 2 — Enable the Google Sheets API
+
+1. Go to **APIs & Services → Library**
+2. Search **Google Sheets API** → click it → **Enable**
+
+### Step 3 — Create a service account
+
+1. Go to **APIs & Services → Credentials**
+2. **Create Credentials → Service account**
+3. Name: `praeto-sheets-sync` → **Create and continue** → **Done** (skip the optional role/access steps)
+4. Click the new service account in the list → **Keys** tab → **Add key → Create new key → JSON** → **Create**
+5. A `.json` file downloads — **keep it safe, it's a credential**
+
+### Step 4 — Note the service account's email
+
+Open the downloaded JSON file and find `"client_email"` — it looks like:
+
+```
+praeto-sheets-sync@praeto-sync.iam.gserviceaccount.com
+```
+
+You'll share every Google Sheet with this email (Step 6).
+
+### Step 5 — Add the key to Vercel
+
+1. Go to [vercel.com](https://vercel.com) → your backend project (`pmtool-4-praeto`)
+2. **Settings → Environment Variables** → add:
+
+| Name | Value |
+|------|-------|
+| `GOOGLE_SERVICE_ACCOUNT_KEY` | *(paste the entire contents of the downloaded JSON file, as one line)* |
+| `FRONTEND_URL` | `https://pmtool-4-praeto.vercel.app` |
+
+3. Click **Save** — Vercel will automatically redeploy
+
+### Step 6 — Share a sheet and test
+
+1. Open the target Google Sheet → **Share**
+2. Paste in the service account email from Step 4 → set role to **Viewer** → **Send** (no notification needed)
+3. Visit `https://pmtool-4-praeto.vercel.app/api/service-account` — it should return `{"email": "..."}`. If it returns an error, the key wasn't pasted correctly in Vercel.
+
+---
+
+## Adding sheets (ongoing)
+
+1. Open the dashboard → click **⚙ Sheets**
+2. The service account email is shown at the top — share the new Google Sheet with that email first (Viewer access)
+3. Enter a name (e.g. `Pipeline`) and paste the sheet's URL
+4. Click **Add sheet** — it syncs automatically
+
+Sheet links are stored in your browser's `localStorage`. Anyone using the dashboard needs to add their own sheet links, but doesn't need any login of their own — the backend's service account handles all reads.
 
 ---
 
@@ -22,7 +81,6 @@ That link (starting with `https://1drv.ms/...`) is what you paste into the dashb
 ### 1. Prerequisites
 
 - Node.js 18+ installed
-- The OneDrive Excel share link (from the step above)
 
 ### 2. Configure backend
 
@@ -31,7 +89,7 @@ cd backend
 cp .env.example .env
 ```
 
-The `.env` file only needs `FRONTEND_URL` if you want to restrict CORS. For local dev the defaults work fine — you can leave it as-is.
+Edit `.env` and paste your downloaded JSON key as the value of `GOOGLE_SERVICE_ACCOUNT_KEY` (one line, valid JSON).
 
 ### 3. Install and run
 
@@ -40,144 +98,51 @@ npm install
 npm run dev
 ```
 
-You should see:
-```
-Praeto backend running on :3001
-Data endpoint: GET http://localhost:3001/api/data?shareUrl=<1drv.ms link>
-```
-
 ### 4. Serve the dashboard
 
-In a separate terminal:
-
 ```bash
-# From the project root (not /backend):
+# From the project root:
 python3 -m http.server 3000
-# or: npx http-server -p 3000
 ```
 
-### 5. Add your first sheet
-
-1. Open `http://localhost:3000/Praeto%20Projects.dc.html`
-2. Click **⚙ Sheets** in the top-right of the header
-3. Enter a name (e.g. `Pipeline`) and paste the share link
-4. Click **Add sheet** — it syncs immediately
-
-Sheet links are stored in your browser's localStorage. They persist between sessions.
-
----
-
-## Deploying to Vercel (free)
-
-### Step 1: Push to GitHub (if not already)
-
-```bash
-git add .
-git commit -m "deploy: praeto excel sync"
-git push
-```
-
-### Step 2: Deploy the backend
-
-1. Go to [vercel.com](https://vercel.com) → sign in with GitHub
-2. **New Project** → select your repo
-3. Set **Root Directory** to `backend`
-4. Add one environment variable:
-   - `FRONTEND_URL` = `https://your-dashboard-url.com` (update after Step 3)
-5. Click **Deploy**
-
-You'll get a URL like `https://praeto-backend.vercel.app` — copy it.
-
-### Step 3: Deploy the dashboard
-
-The dashboard is a static HTML file. Options:
-
-**Option A — Vercel static (easiest):**
-1. New Vercel project → select same repo
-2. Root Directory: `.` (project root)
-3. Framework Preset: **Other**
-4. Build Command: leave empty
-5. Output Directory: `.`
-6. Deploy
-
-**Option B — Netlify drag-and-drop:**
-1. Go to [netlify.com](https://netlify.com) → drag `Praeto Projects.dc.html` into the deploy zone
-
-**Option C — GitHub Pages:**
-Enable GitHub Pages in repo settings → source: main branch, root
-
-### Step 4: Wire it up
-
-In your deployed dashboard, the backend URL defaults to `http://localhost:3001`. To point it at your Vercel backend, open the dashboard HTML and find this line:
-
-```js
-const backend=this.props.backendUrl||'http://localhost:3001';
-```
-
-You can override it by editing the `<dc-import>` tag on the page that embeds the component, or by updating the default in the script. The simplest fix: update the fallback URL:
-
-```js
-const backend=this.props.backendUrl||'https://praeto-backend.vercel.app';
-```
-
-Then go back to your backend Vercel project → **Settings → Environment Variables** → update `FRONTEND_URL` to your dashboard's deployed URL.
-
----
-
-## Adding a new sheet (ongoing)
-
-When Praeto adds a new project tracking sheet to OneDrive:
-
-1. Share it as "Anyone with the link can view" (see top of this guide)
-2. Open the dashboard → **⚙ Sheets**
-3. Enter the sheet name and paste the share link
-4. Click **Add sheet**
-
-The sheet is saved to your browser. Each person using the dashboard needs to add their own links — or you can pre-configure them by editing the default `sheets` in the constructor if you want them hardcoded.
+Open `http://localhost:3000/Praeto%20Projects.dc.html`
 
 ---
 
 ## Troubleshooting
 
-### "NOT_PUBLIC" error on sync
-The share link is not set to "Anyone with the link". Follow the sharing steps at the top of this guide. Company-only or password-protected links will not work.
+### "Service account not configured on server"
+`GOOGLE_SERVICE_ACCOUNT_KEY` is missing or isn't valid JSON. Re-copy the full contents of the downloaded key file — don't truncate or reformat it.
 
-### "Backend not responding"
-- Local: make sure `npm run dev` is running in `/backend`
-- Production: check the backend's Vercel deployment logs
+### "Cannot access this sheet" (`NOT_SHARED`)
+The sheet hasn't been shared with the service account email, or was shared with the wrong one. Open the sheet → Share → add the exact email from `/api/service-account` → Viewer.
 
 ### Sync succeeds but shows wrong data
-- The parser expects project codes in column A (e.g. `A1`, `B2`) and task numbers in the form `1.1`, `1.2`
-- Data starts on row 4 (rows 1–3 are treated as headers)
-- Check the backend terminal for parse errors
-
-### Sheet links reset after browser clear
-Sheet links live in `localStorage` under `praeto-sheets-v1`. Clearing browser data removes them — just re-add them via ⚙ Sheets.
+The parser expects:
+- Column A: project codes (`A1`, `B2`) or task numbers (`1.1`, `1.2`)
+- Column B: name
+- Columns C–F: owner, priority, start date, finish date
+- Data starts on row 4 (rows 1–3 are headers)
 
 ---
 
 ## Architecture
 
 ```
-┌──────────────────────────┐
-│  Dashboard (HTML)        │  Praeto Projects.dc.html
-│  · Sheet registry in     │  stored in browser localStorage
-│    localStorage          │
-└──────────┬───────────────┘
-           │ GET /api/data?shareUrl=<public 1drv.ms link>
+┌──────────────────────────────┐
+│  Dashboard (HTML)            │  Praeto Projects.dc.html
+│  · Sheets in localStorage    │
+└──────────┬───────────────────┘
+           │ GET /api/data?sheetId=...
 ┌──────────▼───────────────────────────────────────────┐
-│  Backend (Node.js + Express, hosted on Vercel)       │
-│  · Encodes share URL → Graph anonymous share token   │
-│  · Downloads file from Microsoft Graph (no auth)     │
-│  · Parses Excel with SheetJS                         │
-│  · Returns JSON to dashboard                         │
+│  Backend (Node.js + Express on Vercel)               │
+│  · Authenticates as the service account               │
+│  · Calls Google Sheets API                            │
+│  · Returns parsed JSON                                │
 └──────────┬───────────────────────────────────────────┘
-           │ anonymous download (no login needed)
-┌──────────▼───────────────────┐
-│  Microsoft Graph API         │
-│  /v1.0/shares/u!.../         │
-│  driveItem/content           │
-└──────────────────────────────┘
+           │ service account key
+┌──────────▼──────────────────────────────┐
+│  Google Sheets API                      │
+│  spreadsheets.values.get                │
+└─────────────────────────────────────────┘
 ```
-
-No OAuth. No tokens. No database. The only requirement is the OneDrive file being publicly shared.

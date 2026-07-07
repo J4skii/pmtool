@@ -12,3 +12,5 @@ dist/
 build/
 .next/
 .cache/
+*-private-key.json
+service-account*.json
