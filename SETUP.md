@@ -67,10 +67,14 @@ You'll share every Google Sheet with this email (Step 6).
 
 ## Adding sheets (ongoing)
 
-1. Open the dashboard → click **⚙ Sheets**
-2. The service account email is shown at the top — share the new Google Sheet with that email first (Viewer access)
-3. Enter a name (e.g. `Pipeline`) and paste the sheet's URL
-4. Click **Add sheet** — it syncs automatically
+1. In Google Sheets, **click the exact tab** you want to sync (e.g. "Summary") so it's the active tab
+2. Copy the URL from your browser's address bar — it now includes that tab's permanent id, e.g. `.../edit#gid=204675008`
+3. Open the dashboard → click **⚙ Sheets**
+4. The service account email is shown at the top — share the spreadsheet with that email first (Viewer access)
+5. Enter a name (e.g. `Pipeline`) and paste the URL you copied
+6. Click **Add sheet** — it syncs automatically, reading only that tab
+
+The Sheets panel shows which tab each connection is reading, e.g. "Tab 3 of 15 — Summary" — refreshed on every sync, so it stays accurate even if that tab gets renamed or moved later. If that tab is ever deleted, sync fails with a clear error instead of silently reading a different tab.
 
 ### Any sheet layout works — columns are auto-detected
 

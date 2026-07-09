@@ -331,7 +331,10 @@
                     <button onClick="{{ s.onRemove }}" style="border:1px solid #F5C8C2;background:#FBEAE8;color:#C0392B;cursor:pointer;font-family:inherit;font-size:11px;font-weight:600;padding:4px 10px;border-radius:7px">Remove</button>
                   </div>
                 </div>
-                <div style="font-size:11px;font-family:'Geist Mono',monospace;color:#9AA0A6;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-bottom:8px">{{ s.url }}</div>
+                <div style="font-size:11px;font-family:'Geist Mono',monospace;color:#9AA0A6;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ s.url }}</div>
+                <sc-if value="{{ s.hasTabInfo }}" hint-placeholder-val="{{ false }}">
+                  <div style="font-size:11px;font-weight:600;color:#7A7F85;margin-top:4px;margin-bottom:8px">{{ s.tabInfo }}</div>
+                </sc-if>
                 <sc-if value="{{ s.isEditingMapping }}" hint-placeholder-val="{{ false }}">
                   <div style="border-top:1px solid #EAE8E1;padding-top:10px;display:flex;flex-direction:column;gap:8px">
                     <sc-for list="{{ s.mapFields }}" as="mf" hint-placeholder-count="7">
@@ -498,11 +501,11 @@ class Component extends DCLogic {
       const d=await res.json().catch(()=>({}));
       if(!res.ok)throw new Error(d.error||'HTTP '+res.status);
       const result=this.parseGenericRows(d.rows||[],sheet.mapping);
-      if(!sheet.mapping||!sheet.headers){
-        const next=[...this.state.sheets];
-        next[idx]={...sheet,mapping:result.mapping,headerRowIndex:result.headerRowIndex,headers:result.headers};
-        this._saveSheets(next);
-      }
+      const next=[...this.state.sheets];
+      const patch={tabIndex:d.tabIndex,tabCount:d.tabCount,tabTitle:d.sheetName};
+      if(!sheet.mapping||!sheet.headers)Object.assign(patch,{mapping:result.mapping,headerRowIndex:result.headerRowIndex,headers:result.headers});
+      next[idx]={...sheet,...patch};
+      this._saveSheets(next);
       if(!result.projects.length){
         this._applyData([]);
         this.setState({syncState:'error',syncMsg:'Connected, but 0 rows matched — check column mapping'});
@@ -877,6 +880,8 @@ class Component extends DCLogic {
         onChange:(e)=>this.setMapField(f,e.target.value),
         options:[{value:'-1',label:'— none —'}].concat(headers.map((h,i)=>({value:String(i),label:String(h||'Column '+(i+1))}))),
       })):[];
+      const hasTabInfo=!!(s.tabCount&&s.tabIndex);
+      const tabInfo=hasTabInfo?('Tab '+s.tabIndex+' of '+s.tabCount+' — "'+(s.tabTitle||'')+'"'):'';
       return {
         name:s.name,url:s.url,
         activeLabel:s.name===st.activeSheetName?'Active':'Set active',
@@ -889,6 +894,7 @@ class Component extends DCLogic {
         isEditingMapping:isEditing,
         mapFields,
         onSaveMapping:()=>this.saveMapping(s.name),
+        hasTabInfo,tabInfo,
       };
     });
     const canAdd=!!(st.newSheetName&&st.newSheetUrl);

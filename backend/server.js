@@ -31,6 +31,15 @@ function extractSheetId(input) {
   return m ? m[1] : s;
 }
 
+// The tab id (gid) is permanent for that tab's lifetime — unaffected by
+// renaming or reordering. Present in the URL whenever a specific tab is open,
+// e.g. .../edit#gid=204675008
+function extractGid(input) {
+  const s = String(input || '');
+  const m = s.match(/[#&?]gid=(\d+)/);
+  return m ? m[1] : null;
+}
+
 // ─── Tell the frontend which Google account to share sheets with ──────────
 app.get('/api/service-account', (req, res) => {
   if (!credentials) return res.status(503).json({ error: 'Service account not configured on server.' });
@@ -45,10 +54,29 @@ app.get('/api/data', async (req, res) => {
 
   try {
     const id = extractSheetId(sheetId);
+    const gid = extractGid(sheetId);
     const sheets = getSheetsClient();
 
     const meta = await sheets.spreadsheets.get({ spreadsheetId: id });
-    const sheetTitle = meta.data.sheets[0].properties.title;
+    const allTabs = meta.data.sheets || [];
+
+    let target;
+    if (gid !== null) {
+      target = allTabs.find(s => String(s.properties.sheetId) === gid);
+      if (!target) {
+        return res.status(404).json({
+          error: `That tab (gid=${gid}) no longer exists in this spreadsheet — it may have been deleted. This spreadsheet has ${allTabs.length} tab(s).`,
+          code: 'TAB_NOT_FOUND',
+          tabCount: allTabs.length,
+        });
+      }
+    } else {
+      // No gid in the stored link — fall back to the first tab (legacy behavior).
+      target = allTabs[0];
+    }
+
+    const sheetTitle = target.properties.title;
+    const tabIndex = target.properties.index + 1; // 1-based, for display
 
     const valuesResp = await sheets.spreadsheets.values.get({
       spreadsheetId: id,
@@ -64,6 +92,8 @@ app.get('/api/data', async (req, res) => {
     res.json({
       rows,
       sheetName: sheetTitle,
+      tabIndex,
+      tabCount: allTabs.length,
       lastSync: new Date().toISOString(),
     });
   } catch (error) {
