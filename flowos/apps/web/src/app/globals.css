@@ -1,0 +1,141 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 224 71% 4%;
+    --card: 0 0% 100%;
+    --card-foreground: 224 71% 4%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 224 71% 4%;
+    --primary: 243 75% 59%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 220 14% 96%;
+    --secondary-foreground: 224 71% 4%;
+    --muted: 220 14% 96%;
+    --muted-foreground: 220 9% 46%;
+    --accent: 220 14% 94%;
+    --accent-foreground: 224 71% 4%;
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+    --success: 142 71% 40%;
+    --success-foreground: 0 0% 100%;
+    --warning: 38 92% 50%;
+    --warning-foreground: 0 0% 10%;
+    --border: 220 13% 91%;
+    --input: 220 13% 91%;
+    --ring: 243 75% 59%;
+    --radius: 0.5rem;
+    --sidebar: 224 20% 98%;
+    --sidebar-foreground: 224 71% 10%;
+    --chart-1: 243 75% 59%;
+    --chart-2: 173 58% 39%;
+    --chart-3: 38 92% 50%;
+    --chart-4: 0 84% 60%;
+    --chart-5: 280 65% 60%;
+  }
+
+  .dark {
+    --background: 224 47% 6%;
+    --foreground: 210 20% 98%;
+    --card: 224 40% 9%;
+    --card-foreground: 210 20% 98%;
+    --popover: 224 40% 9%;
+    --popover-foreground: 210 20% 98%;
+    --primary: 243 80% 67%;
+    --primary-foreground: 224 47% 6%;
+    --secondary: 222 32% 15%;
+    --secondary-foreground: 210 20% 98%;
+    --muted: 222 32% 15%;
+    --muted-foreground: 218 11% 65%;
+    --accent: 222 32% 18%;
+    --accent-foreground: 210 20% 98%;
+    --destructive: 0 72% 55%;
+    --destructive-foreground: 0 0% 100%;
+    --success: 142 60% 45%;
+    --success-foreground: 0 0% 100%;
+    --warning: 38 92% 55%;
+    --warning-foreground: 0 0% 10%;
+    --border: 222 28% 18%;
+    --input: 222 28% 18%;
+    --ring: 243 80% 67%;
+    --sidebar: 224 44% 7%;
+    --sidebar-foreground: 210 20% 92%;
+    --chart-1: 243 80% 67%;
+    --chart-2: 173 58% 49%;
+    --chart-3: 38 92% 55%;
+    --chart-4: 0 72% 55%;
+    --chart-5: 280 65% 65%;
+  }
+
+  .high-contrast {
+    --background: 0 0% 0%;
+    --foreground: 0 0% 100%;
+    --card: 0 0% 4%;
+    --card-foreground: 0 0% 100%;
+    --popover: 0 0% 4%;
+    --popover-foreground: 0 0% 100%;
+    --primary: 60 100% 50%;
+    --primary-foreground: 0 0% 0%;
+    --secondary: 0 0% 12%;
+    --secondary-foreground: 0 0% 100%;
+    --muted: 0 0% 12%;
+    --muted-foreground: 0 0% 80%;
+    --accent: 0 0% 16%;
+    --accent-foreground: 0 0% 100%;
+    --destructive: 0 100% 60%;
+    --destructive-foreground: 0 0% 0%;
+    --success: 120 100% 45%;
+    --success-foreground: 0 0% 0%;
+    --warning: 40 100% 55%;
+    --warning-foreground: 0 0% 0%;
+    --border: 0 0% 40%;
+    --input: 0 0% 40%;
+    --ring: 60 100% 50%;
+    --sidebar: 0 0% 2%;
+    --sidebar-foreground: 0 0% 100%;
+    --chart-1: 60 100% 50%;
+    --chart-2: 180 100% 50%;
+    --chart-3: 40 100% 55%;
+    --chart-4: 0 100% 60%;
+    --chart-5: 300 100% 60%;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+  }
+
+  :focus-visible {
+    @apply outline-none ring-2 ring-ring ring-offset-2 ring-offset-background;
+  }
+}
+
+/* TipTap editor */
+.tiptap-editor .ProseMirror {
+  @apply min-h-[80px] rounded-md border border-input bg-background px-3 py-2 text-sm;
+}
+.tiptap-editor .ProseMirror:focus {
+  @apply outline-none ring-2 ring-ring;
+}
+.tiptap-editor .ProseMirror p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  @apply pointer-events-none float-left h-0 text-muted-foreground;
+}
+.tiptap-content p {
+  @apply mb-1;
+}
+.tiptap-content ul {
+  @apply mb-1 list-disc pl-5;
+}
+.tiptap-content ol {
+  @apply mb-1 list-decimal pl-5;
+}
+.mention {
+  @apply rounded bg-primary/10 px-1 font-medium text-primary;
+}

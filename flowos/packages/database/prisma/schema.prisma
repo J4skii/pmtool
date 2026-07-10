@@ -1,0 +1,1010 @@
+// =====================================================================
+// FlowOS — Multi-tenant PM-OS Prisma Schema
+// Conventions:
+//  - UUID primary keys
+//  - tenantId on every tenant-scoped table, indexed with FKs
+//  - createdAt / updatedAt / deletedAt (soft delete) everywhere
+//  - JSON columns for tenant-customizable structures (custom fields,
+//    branding "skin", workflow definitions, dashboard layouts)
+// =====================================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ------------------------------------------------------------------
+// TENANCY & IDENTITY
+// ------------------------------------------------------------------
+
+enum DataRegion {
+  US
+  EU
+  AU
+  ZA
+}
+
+enum TenantPlan {
+  FREE
+  STARTER
+  PROFESSIONAL
+  ENTERPRISE
+}
+
+/// Multi-tenant root. All tenant-scoped rows carry tenantId.
+model Tenant {
+  id         String     @id @default(uuid()) @db.Uuid
+  slug       String     @unique // subdomain: {slug}.flowos.app
+  name       String
+  plan       TenantPlan @default(FREE)
+  dataRegion DataRegion @default(US)
+  isActive   Boolean    @default(true)
+  /// Custom domain (CNAME) mapping, e.g. pm.acme.com
+  customDomain String?  @unique
+  /// Module toggles + feature flags: { "finance": true, "automations": false, ... }
+  enabledModules Json   @default("{}")
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  organization    Organization?
+  memberships     Membership[]
+  roles           Role[]
+  projects        Project[]
+  tasks           Task[]
+  files           File[]
+  comments        Comment[]
+  activities      Activity[]
+  timeEntries     TimeEntry[]
+  invoices        Invoice[]
+  expenses        Expense[]
+  purchaseOrders  PurchaseOrder[]
+  dashboards      Dashboard[]
+  reports         Report[]
+  automations     Automation[]
+  auditLogs       AuditLog[]
+  notifications   Notification[]
+  clientContacts  ClientContact[]
+  customFields    CustomFieldDefinition[]
+  workflowTemplates WorkflowTemplate[]
+  webhooks        Webhook[]
+  rateCards       RateCard[]
+  folders         Folder[]
+  aiUsageLogs     AiUsageLog[]
+
+  @@index([slug])
+}
+
+/// Company profile + white-label branding ("Skin") for a tenant.
+model Organization {
+  id       String @id @default(uuid()) @db.Uuid
+  tenantId String @unique @db.Uuid
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  legalName String
+  industry  String? // construction | software | marketing | healthcare | events | manufacturing | services | general
+  timezone  String  @default("UTC")
+  currency  String  @default("USD") // ISO 4217 base currency
+  locale    String  @default("en")
+
+  /// White-label "Skin" JSON:
+  /// { theme: { cssVars... }, logoUrl, faviconUrl, loginBackgroundUrl,
+  ///   emailHeaderHtml, emailFooterHtml, terminology: {"project":"Job",...},
+  ///   iconPack, smtp: {...} }
+  branding Json @default("{}")
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+}
+
+enum UserStatus {
+  INVITED
+  ACTIVE
+  SUSPENDED
+  DEACTIVATED
+}
+
+/// Global user identity — can belong to multiple tenants via Membership.
+model User {
+  id           String     @id @default(uuid()) @db.Uuid
+  email        String     @unique
+  passwordHash String? // null for SSO-only accounts
+  firstName    String
+  lastName     String
+  avatarUrl    String?
+  status       UserStatus @default(INVITED)
+
+  /// TOTP 2FA
+  totpSecret   String?
+  totpEnabled  Boolean @default(false)
+  /// UI prefs: { theme: "dark"|"light"|"high-contrast", density, language, notifications: {...} }
+  preferences  Json    @default("{}")
+  /// Skill tags for capacity/skill matching: ["plumbing","react","seo"]
+  skills       String[] @default([])
+  lastLoginAt  DateTime?
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  memberships    Membership[]
+  refreshTokens  RefreshToken[]
+  assignedTasks  TaskAssignee[]
+  timeEntries    TimeEntry[]
+  comments       Comment[]
+  activities     Activity[]
+  notifications  Notification[]
+  auditLogs      AuditLog[]
+  fileVersions   FileVersion[]
+  projectMembers ProjectMember[]
+  ledProjects    Project[]      @relation("ProjectOwner")
+}
+
+/// Links a User to a Tenant with a Role. A user may have different
+/// roles in different tenants.
+model Membership {
+  id       String @id @default(uuid()) @db.Uuid
+  tenantId String @db.Uuid
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userId   String @db.Uuid
+  user     User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  roleId   String @db.Uuid
+  role     Role   @relation(fields: [roleId], references: [id])
+
+  /// Hourly cost + bill rates (minor units), overridable per project via RateCard
+  costRateCents Int?
+  billRateCents Int?
+  /// Weekly capacity in minutes (default 40h)
+  weeklyCapacityMins Int @default(2400)
+  department  String?
+  jobTitle    String?
+  /// Reporting line for org chart
+  managerId   String? @db.Uuid
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  @@unique([tenantId, userId])
+  @@index([tenantId])
+  @@index([userId])
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @db.Uuid
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String   @unique
+  userAgent String?
+  ip        String?
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+}
+
+// ------------------------------------------------------------------
+// RBAC
+// ------------------------------------------------------------------
+
+/// Tenant-scoped role. System roles (isSystem=true) are seeded per tenant:
+/// Super Admin, Admin, Project Manager, Team Lead, Contributor, Viewer, Client.
+model Role {
+  id       String  @id @default(uuid()) @db.Uuid
+  tenantId String  @db.Uuid
+  tenant   Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name     String
+  isSystem Boolean @default(false)
+  /// Granular permission keys, e.g. "projects.create", "finance.invoices.read".
+  /// Stored as string[] against the permission catalog in @flowos/shared.
+  permissions String[] @default([])
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  memberships Membership[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId])
+}
+
+// ------------------------------------------------------------------
+// PROJECTS, WORKFLOWS, TASKS
+// ------------------------------------------------------------------
+
+enum ProjectStatus {
+  PLANNING
+  ACTIVE
+  ON_HOLD
+  COMPLETED
+  ARCHIVED
+  CANCELLED
+}
+
+/// Reusable workflow/project template ("Workflow DNA").
+/// definition JSON: { stages: [{key,name,color,order,automations}],
+///   defaultTasks: [...], customFields: [...], industry }
+model WorkflowTemplate {
+  id       String @id @default(uuid()) @db.Uuid
+  tenantId String? @db.Uuid // null = global built-in template
+  tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name     String
+  industry String?
+  definition Json
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  projects Project[]
+
+  @@index([tenantId])
+}
+
+model Project {
+  id       String        @id @default(uuid()) @db.Uuid
+  tenantId String        @db.Uuid
+  tenant   Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name     String
+  code     String? // human ref e.g. PRJ-0042
+  description String?
+  status   ProjectStatus @default(PLANNING)
+  color    String?
+  ownerId  String?       @db.Uuid
+  owner    User?         @relation("ProjectOwner", fields: [ownerId], references: [id])
+  templateId String?     @db.Uuid
+  template WorkflowTemplate? @relation(fields: [templateId], references: [id])
+
+  startDate DateTime?
+  dueDate   DateTime?
+  completedAt DateTime?
+
+  /// Budget in minor units of `currency`
+  budgetCents BigInt?
+  currency    String  @default("USD")
+
+  /// Tenant-defined custom field values: { fieldKey: value }
+  customFields Json @default("{}")
+  /// Client-portal visibility toggle
+  clientVisible Boolean @default(false)
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  stages     Stage[]
+  tasks      Task[]
+  members    ProjectMember[]
+  files      File[]
+  folders    Folder[]
+  timeEntries TimeEntry[]
+  invoices   Invoice[]
+  expenses   Expense[]
+  purchaseOrders PurchaseOrder[]
+  clientContacts ClientContact[]
+  rateCards  RateCard[]
+  sheetImport ProjectSheetImport?
+
+  @@unique([tenantId, code])
+  @@index([tenantId])
+  @@index([tenantId, status])
+  @@index([ownerId])
+}
+
+/// Links a Project back to the Google Sheet it was imported from, so it can
+/// be re-synced later. One row per imported project.
+model ProjectSheetImport {
+  id        String   @id @default(uuid()) @db.Uuid
+  projectId String   @unique @db.Uuid
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  sheetUrl       String
+  sheetGid       String?
+  headerRowIndex Int
+  /// { name, status, owner, priority, start, finish, percent: colIndex (-1 = unmapped) }
+  mapping        Json
+  /// { "<sheet owner text>": "<FlowOS userId>", ... } — only matched names present
+  ownerMap       Json     @default("{}")
+
+  lastSyncedAt DateTime?
+  lastRowCount Int?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+enum ProjectMemberRole {
+  MANAGER
+  LEAD
+  CONTRIBUTOR
+  VIEWER
+}
+
+model ProjectMember {
+  id        String            @id @default(uuid()) @db.Uuid
+  projectId String            @db.Uuid
+  project   Project           @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  userId    String            @db.Uuid
+  user      User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role      ProjectMemberRole @default(CONTRIBUTOR)
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  @@unique([projectId, userId])
+  @@index([userId])
+}
+
+/// Active workflow stage within a project (columns on the board).
+model Stage {
+  id        String  @id @default(uuid()) @db.Uuid
+  projectId String  @db.Uuid
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  name      String
+  key       String
+  color     String?
+  order     Int     @default(0)
+  /// Marks tasks in this stage as done for progress calcs
+  isDone    Boolean @default(false)
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  tasks Task[]
+
+  @@unique([projectId, key])
+  @@index([projectId])
+}
+
+enum TaskPriority {
+  URGENT
+  HIGH
+  NORMAL
+  LOW
+}
+
+model Task {
+  id        String       @id @default(uuid()) @db.Uuid
+  tenantId  String       @db.Uuid
+  tenant    Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  projectId String       @db.Uuid
+  project   Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  stageId   String?      @db.Uuid
+  stage     Stage?       @relation(fields: [stageId], references: [id])
+  /// Subtask hierarchy
+  parentId  String?      @db.Uuid
+  parent    Task?        @relation("TaskHierarchy", fields: [parentId], references: [id])
+  children  Task[]       @relation("TaskHierarchy")
+
+  title       String
+  description String? // TipTap JSON serialized
+  priority    TaskPriority @default(NORMAL)
+  order       Float        @default(0) // fractional ordering within stage
+  startDate   DateTime?
+  dueDate     DateTime?
+  completedAt DateTime?
+  estimateMins Int?
+  /// % complete 0-100 (rolled up from children when they exist)
+  progress    Int          @default(0)
+  /// Tenant custom field values keyed by CustomFieldDefinition.key
+  customFields Json        @default("{}")
+  /// Recurrence rule (RFC 5545 RRULE) if recurring
+  recurrenceRule String?
+  isMilestone Boolean      @default(false)
+  clientVisible Boolean    @default(false)
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  assignees      TaskAssignee[]
+  dependenciesFrom TaskDependency[] @relation("DependencyPredecessor")
+  dependenciesTo   TaskDependency[] @relation("DependencySuccessor")
+  timeEntries    TimeEntry[]
+  files          File[]
+
+  @@index([tenantId])
+  @@index([projectId, stageId])
+  @@index([parentId])
+  @@index([tenantId, dueDate])
+}
+
+model TaskAssignee {
+  id     String @id @default(uuid()) @db.Uuid
+  taskId String @db.Uuid
+  task   Task   @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  userId String @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([taskId, userId])
+  @@index([userId])
+}
+
+enum DependencyType {
+  FINISH_TO_START
+  START_TO_START
+  FINISH_TO_FINISH
+  START_TO_FINISH
+}
+
+model TaskDependency {
+  id            String         @id @default(uuid()) @db.Uuid
+  predecessorId String         @db.Uuid
+  predecessor   Task           @relation("DependencyPredecessor", fields: [predecessorId], references: [id], onDelete: Cascade)
+  successorId   String         @db.Uuid
+  successor     Task           @relation("DependencySuccessor", fields: [successorId], references: [id], onDelete: Cascade)
+  type          DependencyType @default(FINISH_TO_START)
+  /// Lag (+) or lead (−) in minutes
+  lagMins       Int            @default(0)
+
+  createdAt DateTime @default(now())
+
+  @@unique([predecessorId, successorId])
+  @@index([successorId])
+}
+
+// ------------------------------------------------------------------
+// CUSTOM FIELDS
+// ------------------------------------------------------------------
+
+enum CustomFieldType {
+  TEXT
+  NUMBER
+  CURRENCY
+  DATE
+  DATETIME
+  DROPDOWN
+  MULTI_SELECT
+  FILE
+  SIGNATURE
+  BARCODE
+  GPS_LOCATION
+  FORMULA
+  RELATIONSHIP
+  AI_GENERATED
+  CHECKBOX
+  URL
+  EMAIL
+  PHONE
+}
+
+/// Tenant-defined field schema, attachable to projects, tasks, etc.
+model CustomFieldDefinition {
+  id       String          @id @default(uuid()) @db.Uuid
+  tenantId String          @db.Uuid
+  tenant   Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  /// Which entity this field attaches to: "project" | "task" | "client" | ...
+  entity   String
+  key      String
+  label    String
+  type     CustomFieldType
+  required Boolean         @default(false)
+  order    Int             @default(0)
+  /// Type-specific config: options for dropdowns, formula expression,
+  /// currency code, related entity, AI prompt, validation rules,
+  /// conditional logic: { showIf: { field, op, value } }
+  config   Json            @default("{}")
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  @@unique([tenantId, entity, key])
+  @@index([tenantId, entity])
+}
+
+// ------------------------------------------------------------------
+// FILES & DOCUMENTS
+// ------------------------------------------------------------------
+
+model Folder {
+  id        String   @id @default(uuid()) @db.Uuid
+  tenantId  String   @db.Uuid
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  projectId String?  @db.Uuid // null = Company Drive
+  project   Project? @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  parentId  String?  @db.Uuid
+  parent    Folder?  @relation("FolderTree", fields: [parentId], references: [id])
+  children  Folder[] @relation("FolderTree")
+  name      String
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  files File[]
+
+  @@index([tenantId, projectId])
+  @@index([parentId])
+}
+
+model File {
+  id        String   @id @default(uuid()) @db.Uuid
+  tenantId  String   @db.Uuid
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  projectId String?  @db.Uuid
+  project   Project? @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  taskId    String?  @db.Uuid
+  task      Task?    @relation(fields: [taskId], references: [id])
+  folderId  String?  @db.Uuid
+  folder    Folder?  @relation(fields: [folderId], references: [id])
+
+  name     String
+  mimeType String
+  /// Auto/manual tags for search
+  tags     String[] @default([])
+  /// Extracted OCR text for search
+  ocrText  String?
+  /// Contract/permit/insurance expiry alerting
+  expiresAt DateTime?
+  clientVisible Boolean @default(false)
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  versions FileVersion[]
+
+  @@index([tenantId, projectId])
+  @@index([taskId])
+  @@index([tenantId, expiresAt])
+}
+
+model FileVersion {
+  id       String @id @default(uuid()) @db.Uuid
+  fileId   String @db.Uuid
+  file     File   @relation(fields: [fileId], references: [id], onDelete: Cascade)
+  version  Int
+  /// S3/MinIO object key
+  storageKey String
+  sizeBytes  BigInt
+  checksum   String?
+  /// EXIF / metadata JSON
+  metadata   Json    @default("{}")
+  uploadedById String? @db.Uuid
+  uploadedBy   User?   @relation(fields: [uploadedById], references: [id])
+
+  createdAt DateTime @default(now())
+
+  @@unique([fileId, version])
+}
+
+// ------------------------------------------------------------------
+// COMMUNICATION
+// ------------------------------------------------------------------
+
+/// Polymorphic comment — attaches to any entity via (entityType, entityId).
+model Comment {
+  id         String @id @default(uuid()) @db.Uuid
+  tenantId   String @db.Uuid
+  tenant     Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  entityType String // "task" | "project" | "file" | "invoice" | ...
+  entityId   String @db.Uuid
+  authorId   String @db.Uuid
+  author     User   @relation(fields: [authorId], references: [id])
+  /// TipTap JSON body
+  body       Json
+  /// Extracted @mention user ids for notification fan-out
+  mentions   String[] @default([])
+  parentId   String?  @db.Uuid
+  parent     Comment? @relation("CommentThread", fields: [parentId], references: [id])
+  replies    Comment[] @relation("CommentThread")
+  /// Proofing annotation pin: { x, y, page, shape }
+  annotation Json?
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  @@index([tenantId, entityType, entityId])
+  @@index([authorId])
+}
+
+/// Immutable activity feed event (polymorphic).
+model Activity {
+  id         String @id @default(uuid()) @db.Uuid
+  tenantId   String @db.Uuid
+  tenant     Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  actorId    String? @db.Uuid
+  actor      User?   @relation(fields: [actorId], references: [id])
+  entityType String
+  entityId   String  @db.Uuid
+  /// "task.created" | "task.status_changed" | "file.uploaded" | ...
+  action     String
+  /// Diff payload: { field, from, to } or event-specific data
+  data       Json    @default("{}")
+
+  createdAt DateTime @default(now())
+
+  @@index([tenantId, entityType, entityId, createdAt])
+  @@index([tenantId, createdAt])
+}
+
+// ------------------------------------------------------------------
+// TIME & FINANCE
+// ------------------------------------------------------------------
+
+model TimeEntry {
+  id        String  @id @default(uuid()) @db.Uuid
+  tenantId  String  @db.Uuid
+  tenant    Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userId    String  @db.Uuid
+  user      User    @relation(fields: [userId], references: [id])
+  projectId String  @db.Uuid
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  taskId    String? @db.Uuid
+  task      Task?   @relation(fields: [taskId], references: [id])
+
+  startedAt   DateTime
+  endedAt     DateTime? // null = timer still running
+  durationMins Int?     // materialized on stop / manual entry
+  note        String?
+  billable    Boolean  @default(true)
+  /// Rate snapshot at entry time (minor units/hour)
+  billRateCents Int?
+  invoiceId   String?  @db.Uuid
+  invoice     Invoice? @relation(fields: [invoiceId], references: [id])
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  @@index([tenantId, userId, startedAt])
+  @@index([projectId])
+  @@index([taskId])
+}
+
+enum RateType {
+  HOURLY
+  FIXED
+  COST_PLUS
+  RETAINER
+  MILESTONE
+}
+
+model RateCard {
+  id        String   @id @default(uuid()) @db.Uuid
+  tenantId  String   @db.Uuid
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  projectId String?  @db.Uuid // null = tenant default
+  project   Project? @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  name      String
+  type      RateType @default(HOURLY)
+  currency  String   @default("USD")
+  /// Type-specific config: { hourlyCents, fixedCents, plusPercent, retainerCents, milestones: [...] }
+  config    Json     @default("{}")
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  @@index([tenantId])
+}
+
+enum InvoiceStatus {
+  DRAFT
+  SENT
+  VIEWED
+  PARTIALLY_PAID
+  PAID
+  OVERDUE
+  VOID
+}
+
+model Invoice {
+  id        String        @id @default(uuid()) @db.Uuid
+  tenantId  String        @db.Uuid
+  tenant    Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  projectId String?       @db.Uuid
+  project   Project?      @relation(fields: [projectId], references: [id])
+  number    String // INV-2026-0001
+  status    InvoiceStatus @default(DRAFT)
+  currency  String        @default("USD")
+  issueDate DateTime
+  dueDate   DateTime
+  /// [{ description, quantity, unitCents, taxPercent, totalCents }]
+  lineItems Json          @default("[]")
+  subtotalCents BigInt    @default(0)
+  taxCents      BigInt    @default(0)
+  totalCents    BigInt    @default(0)
+  paidCents     BigInt    @default(0)
+  sentAt    DateTime?
+  viewedAt  DateTime?
+  paidAt    DateTime?
+  clientContactId String? @db.Uuid
+  clientContact ClientContact? @relation(fields: [clientContactId], references: [id])
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  timeEntries TimeEntry[]
+
+  @@unique([tenantId, number])
+  @@index([tenantId, status])
+  @@index([projectId])
+}
+
+enum ExpenseStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  REIMBURSED
+}
+
+model Expense {
+  id        String        @id @default(uuid()) @db.Uuid
+  tenantId  String        @db.Uuid
+  tenant    Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  projectId String?       @db.Uuid
+  project   Project?      @relation(fields: [projectId], references: [id])
+  submittedById String    @db.Uuid
+  status    ExpenseStatus @default(PENDING)
+  category  String?
+  description String
+  amountCents BigInt
+  currency  String        @default("USD")
+  incurredAt DateTime
+  /// Receipt file id + OCR-extracted data: { vendor, date, total }
+  receiptFileId String?   @db.Uuid
+  receiptData   Json?
+  billable  Boolean       @default(false)
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  @@index([tenantId, projectId])
+  @@index([tenantId, status])
+}
+
+enum PoStatus {
+  DRAFT
+  PENDING_APPROVAL
+  APPROVED
+  REJECTED
+  ISSUED
+  RECEIVED
+  CLOSED
+}
+
+/// Purchase Orders and Change Orders (kind discriminator).
+model PurchaseOrder {
+  id        String   @id @default(uuid()) @db.Uuid
+  tenantId  String   @db.Uuid
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  projectId String?  @db.Uuid
+  project   Project? @relation(fields: [projectId], references: [id])
+  kind      String   @default("purchase") // "purchase" | "change"
+  number    String
+  status    PoStatus @default(DRAFT)
+  vendor    String?
+  currency  String   @default("USD")
+  lineItems Json     @default("[]")
+  totalCents BigInt  @default(0)
+  /// Approval chain state: [{ approverId, status, actedAt, escalatesAt }]
+  approvals Json     @default("[]")
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  @@unique([tenantId, number])
+  @@index([tenantId, status])
+}
+
+// ------------------------------------------------------------------
+// CLIENT PORTAL
+// ------------------------------------------------------------------
+
+model ClientContact {
+  id        String   @id @default(uuid()) @db.Uuid
+  tenantId  String   @db.Uuid
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  projectId String?  @db.Uuid
+  project   Project? @relation(fields: [projectId], references: [id])
+  email     String
+  firstName String
+  lastName  String
+  company   String?
+  phone     String?
+  passwordHash String?
+  /// Portal permissions: { approve: true, upload: true, invoices: true }
+  portalAccess Json  @default("{}")
+  lastLoginAt  DateTime?
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  invoices Invoice[]
+
+  @@unique([tenantId, email])
+  @@index([tenantId, projectId])
+}
+
+// ------------------------------------------------------------------
+// REPORTING & DASHBOARDS
+// ------------------------------------------------------------------
+
+model Dashboard {
+  id       String @id @default(uuid()) @db.Uuid
+  tenantId String @db.Uuid
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  ownerId  String? @db.Uuid // null = tenant-shared
+  name     String
+  /// Widget grid: [{ id, type, x, y, w, h, config: { dataSource, filters, viz } }]
+  layout   Json   @default("[]")
+  isDefault Boolean @default(false)
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  @@index([tenantId, ownerId])
+}
+
+model Report {
+  id       String @id @default(uuid()) @db.Uuid
+  tenantId String @db.Uuid
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name     String
+  /// No-code query definition: { entity, filters, groupBy, sort, columns, viz }
+  definition Json
+  /// Schedule: { cadence: "daily"|"weekly"|"monthly", format: "pdf"|"csv"|"xlsx", recipients: [] }
+  schedule   Json?
+  lastRunAt  DateTime?
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  @@index([tenantId])
+}
+
+// ------------------------------------------------------------------
+// AUTOMATION ENGINE
+// ------------------------------------------------------------------
+
+model Automation {
+  id       String  @id @default(uuid()) @db.Uuid
+  tenantId String  @db.Uuid
+  tenant   Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name     String
+  enabled  Boolean @default(true)
+  /// Node-based flow: { trigger: {type, config}, nodes: [{id,type,config,next,branches}] }
+  definition Json
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  executions AutomationExecution[]
+
+  @@index([tenantId, enabled])
+}
+
+enum ExecutionStatus {
+  RUNNING
+  SUCCESS
+  FAILED
+  RETRYING
+  CANCELLED
+}
+
+model AutomationExecution {
+  id           String          @id @default(uuid()) @db.Uuid
+  automationId String          @db.Uuid
+  automation   Automation      @relation(fields: [automationId], references: [id], onDelete: Cascade)
+  status       ExecutionStatus @default(RUNNING)
+  /// Trigger payload + per-node execution trace
+  trace        Json            @default("[]")
+  error        String?
+  attempts     Int             @default(1)
+  startedAt    DateTime        @default(now())
+  finishedAt   DateTime?
+
+  @@index([automationId, startedAt])
+}
+
+model Webhook {
+  id       String  @id @default(uuid()) @db.Uuid
+  tenantId String  @db.Uuid
+  tenant   Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  direction String // "incoming" | "outgoing"
+  name     String
+  url      String? // outgoing target
+  /// HMAC signing secret
+  secret   String
+  events   String[] @default([])
+  enabled  Boolean  @default(true)
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  @@index([tenantId])
+}
+
+// ------------------------------------------------------------------
+// COMPLIANCE, NOTIFICATIONS, AI
+// ------------------------------------------------------------------
+
+/// Immutable audit log — append-only, no updatedAt/deletedAt by design.
+model AuditLog {
+  id       String  @id @default(uuid()) @db.Uuid
+  tenantId String? @db.Uuid // null for platform-level events
+  tenant   Tenant? @relation(fields: [tenantId], references: [id])
+  userId   String? @db.Uuid
+  user     User?   @relation(fields: [userId], references: [id])
+  /// "auth.login" | "auth.login_failed" | "task.view" | "data.export" | ...
+  action     String
+  entityType String?
+  entityId   String? @db.Uuid
+  ip         String?
+  userAgent  String?
+  metadata   Json    @default("{}")
+
+  createdAt DateTime @default(now())
+
+  @@index([tenantId, createdAt])
+  @@index([tenantId, action])
+  @@index([userId])
+}
+
+enum NotificationPriority {
+  URGENT
+  NORMAL
+  LOW
+}
+
+model Notification {
+  id       String @id @default(uuid()) @db.Uuid
+  tenantId String @db.Uuid
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userId   String @db.Uuid
+  user     User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type     String // "mention" | "assignment" | "due_soon" | "approval" | "announcement" | ...
+  priority NotificationPriority @default(NORMAL)
+  title    String
+  body     String?
+  /// Deep link target: { entityType, entityId, url }
+  link     Json?
+  readAt   DateTime?
+
+  createdAt DateTime @default(now())
+
+  @@index([userId, readAt])
+  @@index([tenantId])
+}
+
+/// AI call log for compliance + cost tracking.
+model AiUsageLog {
+  id       String @id @default(uuid()) @db.Uuid
+  tenantId String @db.Uuid
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userId   String? @db.Uuid
+  feature  String // "chat" | "transcription" | "doc_analysis" | "task_generation" | ...
+  model    String
+  promptTokens     Int @default(0)
+  completionTokens Int @default(0)
+  costMicroUsd     Int @default(0)
+  success  Boolean @default(true)
+  error    String?
+
+  createdAt DateTime @default(now())
+
+  @@index([tenantId, createdAt])
+}

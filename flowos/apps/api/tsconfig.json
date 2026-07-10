@@ -1,0 +1,20 @@
+{
+  "extends": "../../packages/config/tsconfig.base.json",
+  "compilerOptions": {
+    "module": "CommonJS",
+    "moduleResolution": "node",
+    "emitDecoratorMetadata": true,
+    "experimentalDecorators": true,
+    "outDir": "dist",
+    "baseUrl": ".",
+    "declaration": false,
+    "removeComments": false,
+    "allowSyntheticDefaultImports": true,
+    "paths": {
+      "@flowos/database": ["../../packages/database/src"],
+      "@flowos/shared": ["../../packages/shared/src"]
+    },
+    "types": ["node", "jest"]
+  },
+  "include": ["src/**/*", "../../packages/database/src/**/*", "../../packages/shared/src/**/*"]
+}
